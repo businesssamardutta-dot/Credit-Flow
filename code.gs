@@ -51,6 +51,13 @@ function doPost(e) {
 }
 
 function doGet(e) {
+  if (e.parameter.action === 'auth') {
+    const email = Session.getActiveUser().getEmail();
+    const returnUrl = e.parameter.returnUrl;
+    if (returnUrl) {
+      return HtmlService.createHtmlOutput('<script>window.location.href="' + returnUrl + '?auth_email=" + encodeURIComponent("' + (email || '') + '");</script>');
+    }
+  }
   return ContentService.createTextOutput("Backend Active");
 }
 
