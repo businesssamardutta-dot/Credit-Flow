@@ -6,6 +6,7 @@ import { statusBadge } from '../App';
 export function LedgerPage({ months, toast }: any) {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedParty, setSelectedParty] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [parties, setParties] = useState<any[]>([]);
   const [rows, setRows] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
@@ -27,11 +28,13 @@ export function LedgerPage({ months, toast }: any) {
   }, [selectedMonth]);
 
   const filteredRows = useMemo(() => {
+    const q = searchQuery.toLowerCase();
     return rows.filter((r: any) => {
       const matchParty = selectedParty === '' || r['Account Name'] === selectedParty;
-      return matchParty;
+      const matchSearch = q === '' || (r['Account Name'] || '').toLowerCase().includes(q) || (r['Notes'] || '').toLowerCase().includes(q);
+      return matchParty && matchSearch;
     });
-  }, [rows, selectedParty]);
+  }, [rows, selectedParty, searchQuery]);
 
   return (
     <div>
@@ -39,7 +42,7 @@ export function LedgerPage({ months, toast }: any) {
         <h2>Ledger</h2>
       </div>
 
-      <div className="filter-bar" style={{ display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '20px' }}>
+      <div className="filter-bar" style={{ display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap' }}>
         <div className="field" style={{ flex: '0 0 auto' }}>
           <label style={{ fontSize: '10px', marginBottom: '4px' }}>Select Month</label>
           <select className="search-input" style={{ width: '150px' }} value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
@@ -58,6 +61,11 @@ export function LedgerPage({ months, toast }: any) {
               <option key={p.partyId} value={p.accountName}>{p.accountName}</option>
             ))}
           </select>
+        </div>
+
+        <div className="field" style={{ flex: '0 0 auto' }}>
+          <label style={{ fontSize: '10px', marginBottom: '4px' }}>Search by Name/Notes</label>
+          <input type="text" className="search-input" style={{ width: '220px' }} placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
         </div>
 
         <button className="btn sm" onClick={fetchLedger} style={{ marginTop: '18px' }}>↻ Refresh</button>

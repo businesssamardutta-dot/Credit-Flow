@@ -60,6 +60,20 @@ export function SettingsPage({ settings, setSettings, saveTheme, toast, refresh 
             <button className="btn" onClick={() => api.sendReminderEmails().then((n: number) => toast(`${n} reminders sent ✓`, 'success')).catch((e: any) => toast(e.message, 'error'))}>✉ Send Reminders</button>
             <button className="btn" onClick={() => api.autoCreateNextMonth().then(r => { toast(r.created ? `Created ${r.month}` : `${r.month} exists`, 'success'); refresh(); }).catch((e: any) => toast(e.message, 'error'))}>📅 Create Next Month</button>
             <button className="btn" onClick={() => api.closeMonth('').then(r => { toast(`Closed. ${r.updated} overdue. Next: ${r.nextMonth}`, 'success'); refresh(); }).catch((e: any) => toast(e.message, 'error'))}>🔒 Close Current Month</button>
+            <button className="btn" onClick={() => {
+              toast('Running ledger audit...', 'success');
+              api.auditLedgers().then(diffs => {
+                const discrepancies = diffs.filter((d: any) => Math.abs(d.calculatedBalance - d.masterBalance) > 1);
+                if (discrepancies.length === 0) {
+                  alert("Ledger Audit Complete: All party master balances perfectly match their ledger transaction history (Closing Balance)!");
+                } else {
+                  console.warn("Ledger Discrepancies:", discrepancies);
+                  alert(`Ledger Audit Complete: Found ${discrepancies.length} parties where the balance doesn't match the Ledger sum. Check console for details.`);
+                }
+              }).catch((e: any) => {
+                toast('Audit failed: ' + e.message, 'error');
+              });
+            }}>🔍 Audit Ledgers</button>
           </div>
         </div>
       </div>
