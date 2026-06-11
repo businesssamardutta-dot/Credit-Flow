@@ -39,11 +39,55 @@ export function MonthlyPage({ months, parties, toast, currentMonth }: any) {
     } catch (e: any) { toast('Error: ' + e.message, 'error'); }
   };
 
+  const handleSyncLedger = async () => {
+    if (!window.confirm(`Auto-fix and sync ${sel} balances from Ledger?`)) return;
+    setBusy(true);
+    try {
+      const ledger = await api.getLedger(sel);
+      const partyData: Record<string, { op: number, cred: number, paid: number }> = {};
+      
+      ledger.forEach((l: any) => {
+        const pid = String(l['Party ID']);
+        if (!partyData[pid]) {
+          partyData[pid] = { op: Number(l['Opening Balance']) || 0, cred: 0, paid: 0 };
+        }
+        partyData[pid].cred += Number(l['Debit (New Credit)']) || Number(l['Debit (Credit)']) || Number(l['Debit']) || 0;
+        partyData[pid].paid += Number(l['Credit (Payment)']) || Number(l['Credit']) || 0;
+      });
+
+      let updated = 0;
+      for (const row of data) {
+        const pid = String(row['Party ID']);
+        if (partyData[pid]) {
+          const pd = partyData[pid];
+          // Check if it's different and needs sync
+          if (row['Opening Balance'] !== pd.op || row['New Credit'] !== pd.cred || row['Paid Amount'] !== pd.paid) {
+            await api.updateMonthRow(sel, row['Row ID'], {
+              openingBalance: pd.op,
+              newCredit: pd.cred,
+              paidAmount: pd.paid
+            });
+            updated++;
+          }
+        }
+      }
+      toast(`Synced ${updated} rows from ledger successfully`, 'success');
+      reload();
+    } catch (e: any) {
+      toast('Error syncing: ' + e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
       <div className="sec-hdr">
         <h2>Monthly View</h2>
-        {sel && <button className="btn" style={{ color: 'var(--red)', borderColor: 'var(--red)' }} onClick={handleClose}>🔒 Close {sel}</button>}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {sel && <button className="btn" onClick={handleSyncLedger}>🔄 Auto-Fix Balances</button>}
+          {sel && <button className="btn" style={{ color: 'var(--red)', borderColor: 'var(--red)' }} onClick={handleClose}>🔒 Close {sel}</button>}
+        </div>
       </div>
       <div className="month-tabs">
         {months.slice().reverse().map((m: string) => (<div key={m} className={`mtab ${sel === m ? 'active' : ''}`} onClick={() => setSel(m)}>{mkLabel(m)}{m === currentMonth ? ' ●' : ''}</div>))}
@@ -95,6 +139,9 @@ export function MonthlyPage({ months, parties, toast, currentMonth }: any) {
 }
 
 function EditModal({ row, mk, onClose, onSaved, toast }: any) {
+  const [openingBalance, setOpeningBalance] = useState<string>(String(row['Opening Balance'] || '0'));
+  const [newCredit, setNewCredit] = useState<string>(String(row['New Credit'] || '0'));
+  const [paidAmount, setPaidAmount] = useState<string>(String(row['Paid Amount'] || '0'));
   const [creditDays, setCreditDays] = useState(row['Credit Days'] || '7 DAYS');
   const [invoiceDate, setInvoiceDate] = useState(row['Invoice Date'] || '');
   const [targetDate, setTargetDate] = useState(row['Target Date'] || '');
@@ -102,7 +149,17 @@ function EditModal({ row, mk, onClose, onSaved, toast }: any) {
   const save = async () => {
     if (!invoiceDate) { toast('Invoice Date required', 'error'); return; }
     setBusy(true);
-    try { await api.updateMonthRow(mk, row['Row ID'], { creditDays, invoiceDate, targetDate }); onSaved(); }
+    try { 
+      await api.updateMonthRow(mk, row['Row ID'], { 
+        openingBalance: parseFloat(openingBalance) || 0,
+        newCredit: parseFloat(newCredit) || 0,
+        paidAmount: parseFloat(paidAmount) || 0,
+        creditDays, 
+        invoiceDate, 
+        targetDate 
+      }); 
+      onSaved(); 
+    }
     catch (e: any) { toast('Error: ' + e.message, 'error'); }
     finally { setBusy(false); }
   };
@@ -113,6 +170,9 @@ function EditModal({ row, mk, onClose, onSaved, toast }: any) {
         <div className="modal-body">
           <div className="info-box">Balance: <strong>{fmtRs(row['Balance'])}</strong> · Status: {statusBadge(row['Status'])}</div>
           <div className="form-grid">
+            <div className="field"><label>Opening Balance</label><input type="number" step="0.01" value={openingBalance} onChange={e => setOpeningBalance(e.target.value)} /></div>
+            <div className="field"><label>New Credit</label><input type="number" step="0.01" value={newCredit} onChange={e => setNewCredit(e.target.value)} /></div>
+            <div className="field"><label>Paid Amount</label><input type="number" step="0.01" value={paidAmount} onChange={e => setPaidAmount(e.target.value)} /></div>
             <div className="field"><label>Credit Days</label><select value={creditDays} onChange={e => setCreditDays(e.target.value)}><option>ADVANCE</option><option>3 DAYS</option><option>7 DAYS</option><option>15 DAYS</option><option>30 DAYS</option><option>45 DAYS</option></select></div>
             <div className="field"><label>Invoice Date</label><input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></div>
             <div className="field"><label>Target Date</label><input type="date" value={targetDate} onChange={e => setTargetDate(e.target.value)} /></div>
