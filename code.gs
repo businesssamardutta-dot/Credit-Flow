@@ -480,12 +480,30 @@ function syncMonthlyFromLedger(monthKey) {
   const l_notesSrc = lh.indexOf('Notes');
   
   const stats = {};
+  const lastClosing = {};
+  const l_obSrc = lh.indexOf('Opening Balance');
+  const l_cbSrc = lh.indexOf('Closing Balance');
+  
   for(let i=1; i<ledgerData.length; i++) {
     const l = ledgerData[i];
-    const recMonth = String(l[l_moSrc] || '').trim();
+    const pid = String(l[l_pidSrc]).trim();
+    if (!pid) continue;
+    
+    if (!stats[pid]) stats[pid] = { db: 0, cr: 0, openingBalance: 0, activeInMonth: false };
+    
+    let rawMonth = l[l_moSrc];
+    let recMonth = '';
+    if (rawMonth instanceof Date) {
+      recMonth = Utilities.formatDate(rawMonth, Session.getScriptTimeZone(), 'yyyy-MM');
+    } else {
+      recMonth = String(rawMonth || '').trim();
+    }
+
     if (recMonth === monthKey || recMonth.includes(monthKey)) {
-      const pid = String(l[l_pidSrc]).trim();
-      if (!stats[pid]) stats[pid] = { db: 0, cr: 0 };
+      if (!stats[pid].activeInMonth) {
+        stats[pid].activeInMonth = true;
+        stats[pid].openingBalance = toNum(l[l_obSrc]);
+      }
       
       let debit = toNum(l[l_dbSrc]);
       let credit = toNum(l[l_crSrc]);
@@ -493,7 +511,7 @@ function syncMonthlyFromLedger(monthKey) {
       // Safeguard against Double-Entry bug 
       if (debit > 0 && credit > 0 && debit === credit) {
          const notes = String(l[l_notesSrc]||'').toLowerCase();
-         if(notes.includes("pay") || notes.includes("neft")) {
+         if(notes.includes("pay") || notes.includes("neft") || notes.includes("rtgs") || notes.includes("cash")) {
              debit = 0;
          } else {
              credit = 0;
@@ -502,6 +520,14 @@ function syncMonthlyFromLedger(monthKey) {
       
       stats[pid].db += debit;
       stats[pid].cr += credit;
+    } else if (recMonth < monthKey) {
+      lastClosing[pid] = toNum(l[l_cbSrc]);
+    }
+  }
+
+  for(let p in stats) {
+    if (!stats[p].activeInMonth) {
+      stats[p].openingBalance = lastClosing[p] || 0;
     }
   }
 
@@ -525,22 +551,30 @@ function syncMonthlyFromLedger(monthKey) {
     const row = mData[i];
     const pid = String(row[m_pidIdx]).trim();
     if (stats[pid]) {
+      const op = stats[pid].openingBalance;
+      const oldOp = Math.round(toNum(row[m_obIdx])*100)/100;
+      const checkOp = Math.round(op*100)/100;
+      
       const oldNc = Math.round(toNum(row[m_ncIdx])*100)/100;
       const oldPa = Math.round(toNum(row[m_paIdx])*100)/100;
       const checkNc = Math.round(stats[pid].db*100)/100;
       const checkPa = Math.round(stats[pid].cr*100)/100;
       
-      if (oldNc !== checkNc || oldPa !== checkPa) {
-        const op = toNum(row[m_obIdx]);
-        const nc = stats[pid].db;
-        const pa = stats[pid].cr;
-        const td = op + nc;
-        const bal = td - pa;
-
-        monthSheet.getRange(i+1, c1['New Credit']).setValue(nc);
-        monthSheet.getRange(i+1, c1['Paid Amount']).setValue(pa);
+      const td = op + stats[pid].db;
+      const bal = td - stats[pid].cr;
+      
+      const checkTd = Math.round(td*100)/100;
+      const checkBal = Math.round(bal*100)/100;
+      const oldTd = Math.round(toNum(row[m_tdIdx])*100)/100;
+      const oldBal = Math.round(toNum(row[m_balIdx])*100)/100;
+      
+      if (oldNc !== checkNc || oldPa !== checkPa || oldTd !== checkTd || oldBal !== checkBal || oldOp !== checkOp) {
+        monthSheet.getRange(i+1, c1['Opening Balance']).setValue(op);
+        monthSheet.getRange(i+1, c1['New Credit']).setValue(stats[pid].db);
+        monthSheet.getRange(i+1, c1['Paid Amount']).setValue(stats[pid].cr);
         monthSheet.getRange(i+1, c1['Total Debt']).setValue(td);
         monthSheet.getRange(i+1, c1['Balance']).setValue(bal);
+
         
         let st = row[m_statIdx];
         const cd = row[m_cdIdx];
@@ -645,6 +679,27 @@ function updateMonthRow(monthKey,rowId,updates){
   throw new Error('Row not found: '+rowId+' in month: '+monthKey);
 }
 
+function getLastClosingBalance(partyId) {
+  const sh = SS().getSheetByName(CFG.SH.LEDGER);
+  if (!sh || sh.getLastRow() < 2) return 0;
+  
+  const d = sh.getDataRange().getValues();
+  const c = colMap(d[0]);
+  
+  const pIdx = c['Party ID'];
+  const clIdx = c['Closing Balance'];
+  
+  if (pIdx === undefined || clIdx === undefined) return 0;
+  
+  // Search from the bottom up to find the most recent ledger entry
+  for (let i = d.length - 1; i >= 1; i--) {
+    if (String(d[i][pIdx]).trim() === String(partyId).trim()) {
+      return toNum(d[i][clIdx]);
+    }
+  }
+  return 0;
+}
+
 function addCredit(partyId,amount,notes,monthKey){
   assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
   monthKey=monthKey||mk();
@@ -657,7 +712,6 @@ function addCredit(partyId,amount,notes,monthKey){
       const oldTotalDebt = toNum(d[i][c['Total Debt']]);
       const oldPaidAmount = toNum(d[i][c['Paid Amount']]);
       const oldNewCredit = toNum(d[i][c['New Credit']]);
-      const oldBalance = oldTotalDebt - oldPaidAmount;
       
       const newAmount = toNum(amount);
       const newNewCredit = oldNewCredit + newAmount;
@@ -673,7 +727,7 @@ function addCredit(partyId,amount,notes,monthKey){
       let st=cd==='ADVANCE'?'ADVANCE':'ACTIVE';
       if(cd!=='ADVANCE'&&tD){
         const df=Math.ceil((tD-today)/86400000);
-        if(newBalance===0) st='PAID'; else if(df<0) st='OVERDUE'; else if(df<=2) st='DUE SOON';
+        if(newBalance<=0) st='PAID'; else if(df<0) st='OVERDUE'; else if(df<=2) st='DUE SOON';
       }
 
       sh.getRange(r,c1['New Credit']).setValue(newNewCredit);
@@ -683,17 +737,20 @@ function addCredit(partyId,amount,notes,monthKey){
       sh.getRange(r,c1['Invoice Date']).setValue(fmtDate(now));
       sh.getRange(r,c1['Target Date']).setValue(target);
       sh.getRange(r,c1['Notes']).setValue(notes||'');
-      sh.getRange(r,c1['Status']).setValue(newBalance===0?'PAID':st);
+      sh.getRange(r,c1['Status']).setValue(newBalance<=0?'PAID':st);
       sh.getRange(r,c1['Updated At']).setValue(fmtDate(now));
+      
+      const previousClosing = getLastClosingBalance(partyId);
+      const newLedgerBalance = previousClosing + newAmount;
       
       addLedgerEntry({
         partyId,
         accountName:d[i][c['Account Name']],
         month:monthKey,
-        openingBalance:oldBalance,
+        openingBalance:previousClosing,
         debit:newAmount,
         credit:0,
-        closingBalance:newBalance,
+        closingBalance:newLedgerBalance,
         status:st,
         notes:notes||''
       });
@@ -739,14 +796,18 @@ function recordPayment(partyId,amount,method,reference,notes,monthKey){
       sh.getRange(r,c1['Updated At']).setValue(fmtDate(new Date()));
       
       updatePartyScore(partyId, ns);
+      
+      const previousClosing = getLastClosingBalance(partyId);
+      const newLedgerBalance = previousClosing - paymentAmount;
+      
       addLedgerEntry({
         partyId,
         accountName: d[i][c['Account Name']],
         month: monthKey,
-        openingBalance: oldTotalDebt - oldPaidAmount, 
+        openingBalance: previousClosing, 
         debit: 0,
         credit: paymentAmount,
-        closingBalance: newBalance,
+        closingBalance: newLedgerBalance,
         status: st,
         notes: `${method||'Cash'} ${reference||'-'} ${notes||''}`
       });
