@@ -10,6 +10,6 @@ export const THEMES = {
 const MLbl = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 export function mkLabel(mk: string){ if(!mk) return ''; const p=mk.split('-'); return (MLbl[parseInt(p[1])]||p[1])+' '+p[0]; }
 export function fmt(n: number){ return (n||0).toLocaleString('en-IN'); }
-export function fmtRs(n: number){ return '₹'+fmt(n); }
+export function fmtRs(n: number){ return n < 0 ? '-₹'+fmt(Math.abs(n)) : '₹'+fmt(n); }
 
 export type ThemeKey = keyof typeof THEMES;

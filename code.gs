@@ -1,242 +1,1342 @@
-// COMPLETE CORRECT code.gs FOR GOOGLE APPS SCRIPT
-// Features automatically synced Monthly Data ensuring your LEDGER and MONTH always matches exactly.
-
-const DB_FUNCTIONS = {};
-
 function doPost(e) {
+  if (!e || !e.postData) {
+    return ContentService.createTextOutput(JSON.stringify({success: false, error: "No post data"}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   try {
     const payload = JSON.parse(e.postData.contents);
-    const func = payload.func;
-    const args = payload.args || [];
-    if (!DB_FUNCTIONS[func]) throw new Error("Function not found: " + func);
-    const result = DB_FUNCTIONS[func].apply(null, args);
-    return ContentService.createTextOutput(JSON.stringify({ success: true, data: result })).setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ success: false, error: error.message || String(error) })).setMimeType(ContentService.MimeType.JSON);
+    let result = null;
+    
+    // Map of frontend functions to apps script functions
+    if (payload.func === 'getParties') result = getParties();
+    else if (payload.func === 'initDatabase') result = initDatabase();
+    else if (payload.func === 'autoCreateNextMonth') result = autoCreateNextMonth();
+    else if (payload.func === 'getSettings') result = getSettings();
+    else if (payload.func === 'saveSetting') result = saveSetting.apply(null, payload.args);
+    else if (payload.func === 'getDashboardSummary') result = getDashboardSummary();
+    else if (payload.func === 'listLiftingMonths') result = listLiftingMonths();
+    else if (payload.func === 'getLiftingData') result = getLiftingData.apply(null, payload.args);
+    else if (payload.func === 'getMonthData') result = getMonthData.apply(null, payload.args);
+    else if (payload.func === 'closeMonth') result = closeMonth.apply(null, payload.args);
+    else if (payload.func === 'sendReminderEmails') result = sendReminderEmails();
+    else if (payload.func === 'updateAllScores') result = updateAllScores();
+    else if (payload.func === 'deleteParty') result = deleteParty.apply(null, payload.args);
+    else if (payload.func === 'addParty') result = addParty.apply(null, payload.args);
+    else if (payload.func === 'updateParty') result = updateParty.apply(null, payload.args);
+    else if (payload.func === 'getContacts') result = getContacts.apply(null, payload.args);
+    else if (payload.func === 'addContact') result = addContact.apply(null, payload.args);
+    else if (payload.func === 'deleteContact') result = deleteContact.apply(null, payload.args);
+    else if (payload.func === 'getTasks') result = getTasks.apply(null, payload.args);
+    else if (payload.func === 'addTask') result = addTask.apply(null, payload.args);
+    else if (payload.func === 'updateTask') result = updateTask.apply(null, payload.args);
+    else if (payload.func === 'deleteTask') result = deleteTask.apply(null, payload.args);
+    else if (payload.func === 'getLedger') result = getLedger.apply(null, payload.args);
+    else if (payload.func === 'getDeliveryHistory') result = getDeliveryHistory.apply(null, payload.args);
+    else if (payload.func === 'updateMonthRow') result = updateMonthRow.apply(null, payload.args);
+    else if (payload.func === 'addCredit') result = addCredit.apply(null, payload.args);
+    else if (payload.func === 'recordPayment') result = recordPayment.apply(null, payload.args);
+    else if (payload.func === 'updateLiftingTarget') result = updateLiftingTarget.apply(null, payload.args);
+    else if (payload.func === 'completeLiftingTarget') result = completeLiftingTarget.apply(null, payload.args);
+    else if (payload.func === 'resetLiftingDeliveries') result = resetLiftingDeliveries.apply(null, payload.args);
+    else if (payload.func === 'recordDelivery') result = recordDelivery.apply(null, payload.args);
+    else throw new Error("Unknown function requested: " + payload.func);
+
+    return ContentService.createTextOutput(JSON.stringify({success: true, data: result}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({success: false, error: err.message}))
+      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
 function doGet(e) {
-  return ContentService.createTextOutput("Ledger System Backend Active.");
+  return ContentService.createTextOutput("Backend Active");
 }
 
-function getDB() { return SpreadsheetApp.getActiveSpreadsheet(); }
-function getHeaders(sheet) { return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]; }
-function getSheetData(sheetName) {
-  const sheet = getDB().getSheetByName(sheetName);
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
-  const headers = data[0];
-  const rows = [];
-  for (let i = 1; i < data.length; i++) {
-    let obj = { _rowIndex: i + 1 };
-    for (let j = 0; j < headers.length; j++) {
-      obj[headers[j]] = data[i][j];
+function doOptions(e) { 
+  return ContentService.createTextOutput("")
+    .setMimeType(ContentService.MimeType.TEXT); 
+}
+
+const CFG = {
+  SH:{ PARTIES:'Parties', CONTACTS:'Contacts', TASKS:'Tasks',
+       INTERACTIONS:'Interactions', LEDGER:'Ledger', USERS:'Users', SETTINGS:'Settings',
+       LIFTING_HISTORY:'Lifting Ledger' },
+  MONTHLY_PREFIX:'Month_',
+  LIFTING_PREFIX:'Lifting_',
+  LIFTING_HIST_PREFIX:'Lifting_Hist_', 
+  ROLES:{ ADMIN:'Admin', COLLECTOR:'Collector', VIEWER:'Viewer' },
+  COLS:{
+    PARTIES:['Party ID','SL NO','Account Name','Contact No','Address','Email',
+             'Credit Limit','Credit Days','Status','Score','Payment Mode',
+             'Created By','Created At','Updated At'],
+    CONTACTS:['Contact ID','Party ID','Name','Phone','Email','Role','Created At','Updated At'],
+    TASKS:['Task ID','Party ID','Title','Description','Target Date','Assigned To','Status','Created At','Updated At'],
+    INTERACTIONS:['Interaction ID','Party ID','Type','Date','Subject','Notes','Created At'],
+    LEDGER:['Timestamp','Party ID','Account Name','Month','Opening Balance',
+            'Debit (New Credit)','Credit (Payment)','Closing Balance','Status','Collector','Notes'],
+    USERS:['Email','Role','Created At'],
+    SETTINGS:['Key','Value'],
+    MONTHLY:['Row ID','Party ID','Account Name','Contact No','Opening Balance',
+             'New Credit','Total Debt','Paid Amount','Balance',
+             'Credit Days','Invoice Date','Target Date','Last Payment Date',
+             'Status','Score','Overdue Days','Notes','Updated At'],
+    LIFTING:['Row ID','Party ID','Account Name','Contact No','Month',
+             'Target Quantity (kg)','Delivered Quantity (kg)','Remaining (kg)',
+             'Completion %','Delivery Frequency','Preferred Day','Status',
+             'Last Delivery Date','Last Delivery Qty','Created At','Updated At'],
+    LIFTING_HISTORY:['Timestamp','Party ID','Account Name','Month','Target Quantity (kg)','Trip Delivery (kg)','Cumulative Delivered (kg)','Remaining (kg)','Completion %','Status','Collector','Notes']
+  },
+  DEMO_PARTIES:[
+    ['1','GHOSH TRADERS','7001996720','249, MASTER PARA, PO KATWA, PURBA BARDHAMAN','7 DAYS']
+  ],
+  DEMO_LIFTING_TARGETS: { }
+};
+
+function uid(p){ return p+'_'+Utilities.getUuid().replace(/-/g,'').slice(0,10); }
+function toNum(v){ const n=parseFloat(v); return isNaN(n)?0:n; }
+function fmtDate(d){
+  if(!d) return '';
+  try{ return Utilities.formatDate(d instanceof Date?d:new Date(d), Session.getScriptTimeZone(),'yyyy-MM-dd'); }
+  catch(e){ return ''; }
+}
+function parseD(s){
+  if(!s) return null;
+  try{ const d=new Date(s); return isNaN(d.getTime())?null:d; }
+  catch(e){ return null; }
+}
+function mk(d){ d=d||new Date(); return Utilities.formatDate(d,Session.getScriptTimeZone(),'yyyy-MM'); }
+function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function cdNum(s){
+  if(!s) return 7;
+  if(s==='ADVANCE') return 0;
+  const m=String(s).match(/(\d+)/);
+  return m?parseInt(m[1]):7;
+}
+function SS(){ return SpreadsheetApp.getActiveSpreadsheet(); }
+function colMap(hdr){ const c={}; hdr.forEach((h,i)=>c[h]=i); return c; }
+function colMap1(hdr){ const c={}; hdr.forEach((h,i)=>c[h]=i+1); return c; }
+
+function getRole(){
+  try{
+    const e=Session.getActiveUser().getEmail();
+    if(!e) return CFG.ROLES.ADMIN;
+    const sh=SS().getSheetByName(CFG.SH.USERS);
+    if(!sh) return CFG.ROLES.ADMIN;
+    const d=sh.getDataRange().getValues();
+    for(let i=1;i<d.length;i++) if(d[i][0]===e) return d[i][1];
+    return CFG.ROLES.ADMIN;
+  }catch(e){ return CFG.ROLES.ADMIN; }
+}
+function assertRole(a){ const r=getRole(); if(!a.includes(r)) throw new Error('Access denied: '+r); }
+
+function ensureSheet(name,headers,color){
+  const ss=SS(); let sh=ss.getSheetByName(name);
+  if(!sh){
+    sh=ss.insertSheet(name);
+    sh.getRange(1,1,1,headers.length).setValues([headers])
+      .setFontWeight('bold').setFontColor('#ffffff').setBackground(color||'#1e293b');
+    sh.setFrozenRows(1);
+    sh.setColumnWidths(1,headers.length,140);
+  }
+  return sh;
+}
+
+function ensureMonthSheet(monthKey){
+  monthKey = monthKey || mk();
+  const name=CFG.MONTHLY_PREFIX+monthKey;
+  const ss=SS();
+  let sh=ss.getSheetByName(name);
+  if(!sh){
+    sh=ss.insertSheet(name);
+    const cols=CFG.COLS.MONTHLY;
+    sh.getRange(1,1,1,cols.length).setValues([cols])
+      .setFontWeight('bold').setFontColor('#ffffff').setBackground('#0f172a');
+    sh.setFrozenRows(1);
+    sh.setColumnWidths(1,cols.length,140);
+    try{
+      const sr=sh.getRange(2,14,500,1);
+      const rules=[];
+      [['PAID','#166534','#bbf7d0'],['OVERDUE','#7f1d1d','#fecaca'],
+       ['DUE SOON','#78350f','#fef3c7'],['ACTIVE','#1e3a5f','#bfdbfe'],
+       ['ADVANCE','#4a044e','#f5d0fe']].forEach(([t,bg,fg])=>
+        rules.push(SpreadsheetApp.newConditionalFormatRule()
+          .whenTextEqualTo(t).setBackground(bg).setFontColor(fg)
+          .setRanges([sr]).build()));
+      sh.setConditionalFormatRules(rules);
+    }catch(e){}
+    populateMonthSheet(sh,monthKey);
+  }
+  return sh;
+}
+
+function getOrCreateMonthSheet(monthKey){
+  monthKey = monthKey || mk();
+  return SS().getSheetByName(CFG.MONTHLY_PREFIX+monthKey) || ensureMonthSheet(monthKey);
+}
+
+function populateMonthSheet(sh,monthKey){
+  const parties=getAllPartiesRaw();
+  if(!parties.length) return;
+  const now=new Date();
+  const rows=parties.map(p=>{
+    const dn=cdNum(p['Credit Days']);
+    const inv=fmtDate(now);
+    const target=dn===0?inv:fmtDate(addDays(now,dn));
+    return[uid('MR'),p['Party ID'],p['Account Name'],p['Contact No'],
+      0,0,0,0,0,
+      p['Credit Days'] || '7 DAYS',inv,target,'',
+      p['Credit Days']==='ADVANCE'?'ADVANCE':'ACTIVE',
+      p['Score']||50,0,'',fmtDate(now)];
+  });
+  if(rows.length)
+    sh.getRange(2,1,rows.length,CFG.COLS.MONTHLY.length).setValues(rows);
+  carryForward(sh,monthKey);
+}
+
+function carryForward(sh,monthKey){
+  try{
+    const[yr,mo]=monthKey.split('-').map(Number);
+    const prevMonthDate = new Date(yr, mo - 2, 1); 
+    const prevSh=SS().getSheetByName(CFG.MONTHLY_PREFIX+mk(prevMonthDate));
+    
+    if(!prevSh||prevSh.getLastRow()<2) return;
+    
+    const pd=prevSh.getDataRange().getValues(); 
+    const ph=pd[0];
+    const pidI=ph.indexOf('Party ID'); 
+    const balI=ph.indexOf('Balance');
+    
+    if(pidI === -1 || balI === -1) return;
+
+    const bm={};
+    for(let i=1;i<pd.length;i++){
+      const pId = String(pd[i][pidI]).trim();
+      if(pId) bm[pId] = toNum(pd[i][balI]);
     }
-    rows.push(obj);
+
+    const cd=sh.getDataRange().getValues(); 
+    const ch=cd[0];
+    const cC=colMap1(ch);
+    const targetPidI = ch.indexOf('Party ID');
+    if(targetPidI === -1) return;
+
+    let updated = false;
+    for(let i=1;i<cd.length;i++){
+      const currentPartyId = String(cd[i][targetPidI]).trim();
+      const carry = bm[currentPartyId] !== undefined ? bm[currentPartyId] : 0;
+      
+      const oldOpening = toNum(cd[i][ch.indexOf('Opening Balance')]);
+      const oldNewCredit = toNum(cd[i][ch.indexOf('New Credit')]);
+      const oldPaid = toNum(cd[i][ch.indexOf('Paid Amount')]);
+      
+      if(oldOpening !== carry){
+        const newTotalDebt = carry + oldNewCredit;
+        const newBalance = newTotalDebt - oldPaid;
+        
+        sh.getRange(i+1, cC['Opening Balance']).setValue(carry);
+        sh.getRange(i+1, cC['Total Debt']).setValue(newTotalDebt);
+        sh.getRange(i+1, cC['Balance']).setValue(newBalance);
+        
+        if (newBalance <= 0) {
+          sh.getRange(i+1, cC['Status']).setValue('PAID');
+        } else {
+          const statusColVal = cd[i][ch.indexOf('Status')];
+          if (statusColVal === 'PAID') {
+            sh.getRange(i+1, cC['Status']).setValue(cd[i][ch.indexOf('Credit Days')] === 'ADVANCE' ? 'ADVANCE' : 'ACTIVE');
+          }
+        }
+        updated = true;
+      }
+    }
+    if (updated) {
+      SpreadsheetApp.flush();
+    }
+  }catch(e){ console.error('carryForward error:',e.message); }
+}
+
+function ensureLiftingSheet(monthKey){
+  monthKey = monthKey || mk();
+  const name=CFG.LIFTING_PREFIX+monthKey;
+  const ss=SS();
+  let sh=ss.getSheetByName(name);
+  if(!sh){
+    sh=ss.insertSheet(name);
+    const cols=CFG.COLS.LIFTING;
+    sh.getRange(1,1,1,cols.length).setValues([cols])
+      .setFontWeight('bold').setFontColor('#ffffff').setBackground('#7c2d12');
+    sh.setFrozenRows(1);
+    sh.setColumnWidths(1,cols.length,140);
+    try{
+      const sr=sh.getRange(2,12,500,1);
+      const rules=[];
+      [['COMPLETED','#166534','#bbf7d0'],['IN PROGRESS','#0e7490','#a5f3fc'],
+       ['NOT STARTED','#64748b','#e2e8f0'],['OVERDUE','#7f1d1d','#fecaca'],
+       ['NO TARGET','#78350f','#fef3c7']].forEach(([t,bg,fg])=>
+        rules.push(SpreadsheetApp.newConditionalFormatRule()
+          .whenTextEqualTo(t).setBackground(bg).setFontColor(fg)
+          .setRanges([sr]).build()));
+      sh.setConditionalFormatRules(rules);
+    }catch(e){}
+    populateLiftingSheet(sh,monthKey);
+  }
+  return sh;
+}
+
+function populateLiftingSheet(sh, monthKey){
+  const parties = getAllPartiesRaw();
+  if(!parties.length) return;
+  const now = new Date();
+  const rows = parties.map(p => {
+    const partyId = p['Party ID'];
+    const slNo = String(p['SL NO']);
+    const demoTarget = CFG.DEMO_LIFTING_TARGETS[slNo];
+    const targetQty = demoTarget ? demoTarget.target : 0;
+    const freq = demoTarget ? demoTarget.frequency : 'Weekly';
+    const day = demoTarget ? demoTarget.day : 'Monday';
+    return [
+      uid('LR'), partyId, p['Account Name'], p['Contact No'], monthKey,
+      targetQty, 0, targetQty, 0, freq, day,
+      targetQty > 0 ? 'NOT STARTED' : 'NO TARGET', '', '', fmtDate(now), fmtDate(now)
+    ];
+  });
+  if(rows.length) {
+    sh.getRange(2, 1, rows.length, CFG.COLS.LIFTING.length).setValues(rows);
+  }
+}
+
+function getOrCreateLiftingSheet(monthKey){
+  monthKey = monthKey || mk();
+  return SS().getSheetByName(CFG.LIFTING_PREFIX+monthKey) || ensureLiftingSheet(monthKey);
+}
+
+function initDatabase(){
+  ensureSheet(CFG.SH.USERS,     CFG.COLS.USERS,        '#1e293b');
+  ensureSheet(CFG.SH.SETTINGS,  CFG.COLS.SETTINGS,     '#1e293b');
+  ensureSheet(CFG.SH.PARTIES,   CFG.COLS.PARTIES,      '#3730a3');
+  ensureSheet(CFG.SH.CONTACTS,  CFG.COLS.CONTACTS,     '#0e7490');
+  ensureSheet(CFG.SH.TASKS,     CFG.COLS.TASKS,        '#6d28d9');
+  ensureSheet(CFG.SH.INTERACTIONS,CFG.COLS.INTERACTIONS,'#b45309');
+  ensureSheet(CFG.SH.LEDGER,    CFG.COLS.LEDGER,       '#065f46');
+  ensureSheet(CFG.SH.LIFTING_HISTORY,CFG.COLS.LIFTING_HISTORY,'#9a3412'); 
+
+  const uSh=SS().getSheetByName(CFG.SH.USERS);
+  if(uSh.getLastRow()<2)
+    uSh.appendRow([Session.getEffectiveUser().getEmail(),CFG.ROLES.ADMIN,new Date()]);
+
+  const sSh=SS().getSheetByName(CFG.SH.SETTINGS);
+  if(sSh.getLastRow()<2)
+    [['theme','ocean'],['remindersEnabled','true'],['adminEmail','']].forEach(r=>sSh.appendRow(r));
+
+  const pSh=SS().getSheetByName(CFG.SH.PARTIES);
+  if(pSh.getLastRow()<2)
+    CFG.DEMO_PARTIES.forEach(p=>pSh.appendRow([uid('P'),p[0],p[1],p[2],p[3],'',0,p[4],
+      'ACTIVE',50,Session.getActiveUser().getEmail(),new Date(),new Date()]));
+
+  ensureMonthSheet(mk());
+  ensureLiftingSheet(mk());
+  autoCreateNextMonth();
+  return{success:true};
+}
+
+function autoCreateNextMonth(){
+  try{
+    const now=new Date();
+    const nk=mk(new Date(now.getFullYear(),now.getMonth()+1,1));
+    let created=false;
+    if(!SS().getSheetByName(CFG.MONTHLY_PREFIX+nk)){
+      ensureMonthSheet(nk);
+      created=true;
+    }
+    if(!SS().getSheetByName(CFG.LIFTING_PREFIX+nk)){
+      ensureLiftingSheet(nk); 
+      created=true;
+    }
+    return{created:created,month:nk};
+  }catch(e){
+    console.error('autoCreateNextMonth:',e.message);
+    return{created:false,error:e.message};
+  }
+}
+
+function getAllPartiesRaw(){
+  const sh=SS().getSheetByName(CFG.SH.PARTIES);
+  if(!sh||sh.getLastRow()<2) return[];
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  return d.slice(1).map(r=>{ const o={}; h.forEach((k,i)=>o[k]=r[i]); return o; });
+}
+
+function getParties(){
+  return getAllPartiesRaw().map(p=>({
+    partyId:p['Party ID'], slNo:p['SL NO'], accountName:p['Account Name'],
+    contactNo:p['Contact No'], address:p['Address'], email:p['Email'],
+    creditLimit:toNum(p['Credit Limit']), creditDays:p['Credit Days'],
+    status:p['Status'], score:parseInt(p['Score'])||50, paymentMode:p['Payment Mode']
+  }));
+}
+
+function syncNewPartyToExistingMonths(partyId, p) {
+  const ss = SS();
+  const sheets = ss.getSheets();
+  const now = new Date();
+  const inv = fmtDate(now);
+  const dn = cdNum(p.creditDays);
+  const target = dn === 0 ? inv : fmtDate(addDays(now, dn));
+
+  sheets.forEach(sh => {
+    const name = sh.getName();
+    if (name.startsWith(CFG.MONTHLY_PREFIX)) {
+      const data = sh.getDataRange().getValues();
+      const exists = data.slice(1).some(row => String(row[1]) === String(partyId));
+      if (!exists) {
+        sh.appendRow([
+          uid('MR'), partyId, p.accountName || '', p.contactNo || '',
+          0, 0, 0, 0, 0, p.creditDays || '7 DAYS', inv, target, '',
+          p.creditDays === 'ADVANCE' ? 'ADVANCE' : 'ACTIVE', 50, 0, '', inv
+        ]);
+      }
+    }
+    if (name.startsWith(CFG.LIFTING_PREFIX)) {
+      const mKey = name.replace(CFG.LIFTING_PREFIX, '');
+      const data = sh.getDataRange().getValues();
+      const exists = data.slice(1).some(row => String(row[1]) === String(partyId));
+      if (!exists) {
+        sh.appendRow([
+          uid('LR'), partyId, p.accountName || '', p.contactNo || '', mKey,
+          0, 0, 0, 0, 'Weekly', 'Monday', 'NO TARGET', '', '', inv, inv
+        ]);
+      }
+    }
+  });
+}
+
+function addParty(data){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  const sh=SS().getSheetByName(CFG.SH.PARTIES);
+  const id=uid('P');
+  sh.appendRow([id,data.slNo||'',data.accountName||'',data.contactNo||'',
+    data.address||'',data.email||'',toNum(data.creditLimit),data.creditDays||'7 DAYS',
+    'ACTIVE',50,data.paymentMode||'',Session.getActiveUser().getEmail(),new Date(),new Date()]);
+  try{
+    const monthKey=mk();
+    getOrCreateMonthSheet(monthKey);
+    getOrCreateLiftingSheet(monthKey);
+    syncNewPartyToExistingMonths(id, data);
+  }catch(e){ console.error('addParty month sync:',e); }
+  return id;
+}
+
+function updateParty(partyId,updates){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  const sh=SS().getSheetByName(CFG.SH.PARTIES);
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const c=colMap1(h);
+  const fm={accountName:'Account Name',contactNo:'Contact No',address:'Address',
+            email:'Email',creditLimit:'Credit Limit',creditDays:'Credit Days',
+            status:'Status',paymentMode:'Payment Mode'};
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(partyId)){
+      Object.entries(updates).forEach(([k,v])=>{ if(fm[k]&&c[fm[k]]) sh.getRange(i+1,c[fm[k]]).setValue(v); });
+      sh.getRange(i+1,c['Updated At']).setValue(new Date());
+      return true;
+    }
+  }
+  throw new Error('Party not found');
+}
+
+function deleteParty(partyId){
+  assertRole([CFG.ROLES.ADMIN]);
+  const sh=SS().getSheetByName(CFG.SH.PARTIES);
+  const d=sh.getDataRange().getValues();
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(partyId)){ sh.deleteRow(i+1); return true; }
+  }
+  throw new Error('Party not found');
+}
+
+function updatePartyScore(partyId,score){
+  const sh=SS().getSheetByName(CFG.SH.PARTIES);
+  if(!sh) return;
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const pi=h.indexOf('Party ID'); const si=h.indexOf('Score');
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][pi])===String(partyId)){ sh.getRange(i+1,si+1).setValue(score); return; }
+  }
+}
+
+function syncMonthlyFromLedger(monthKey) {
+  monthKey = monthKey || mk();
+  const ledgerSheet = SS().getSheetByName(CFG.SH.LEDGER);
+  const monthSheet = SS().getSheetByName(CFG.MONTHLY_PREFIX + monthKey);
+  if (!ledgerSheet || !monthSheet || ledgerSheet.getLastRow() < 2 || monthSheet.getLastRow() < 2) return;
+
+  const ledgerData = ledgerSheet.getDataRange().getValues();
+  const lh = ledgerData[0];
+  const l_pidSrc = lh.indexOf('Party ID');
+  const l_moSrc = lh.indexOf('Month');
+  const l_dbSrc = lh.indexOf('Debit (New Credit)');
+  const l_crSrc = lh.indexOf('Credit (Payment)');
+  const l_notesSrc = lh.indexOf('Notes');
+  
+  const stats = {};
+  for(let i=1; i<ledgerData.length; i++) {
+    const l = ledgerData[i];
+    const recMonth = String(l[l_moSrc] || '').trim();
+    if (recMonth === monthKey || recMonth.includes(monthKey)) {
+      const pid = String(l[l_pidSrc]).trim();
+      if (!stats[pid]) stats[pid] = { db: 0, cr: 0 };
+      
+      let debit = toNum(l[l_dbSrc]);
+      let credit = toNum(l[l_crSrc]);
+      
+      // Safeguard against Double-Entry bug 
+      if (debit > 0 && credit > 0 && debit === credit) {
+         const notes = String(l[l_notesSrc]||'').toLowerCase();
+         if(notes.includes("pay") || notes.includes("neft")) {
+             debit = 0;
+         } else {
+             credit = 0;
+         }
+      }
+      
+      stats[pid].db += debit;
+      stats[pid].cr += credit;
+    }
+  }
+
+  const mData = monthSheet.getDataRange().getValues();
+  const mh = mData[0];
+  const m_pidIdx = mh.indexOf('Party ID');
+  const m_ncIdx = mh.indexOf('New Credit');
+  const m_paIdx = mh.indexOf('Paid Amount');
+  const m_obIdx = mh.indexOf('Opening Balance');
+  const m_tdIdx = mh.indexOf('Total Debt');
+  const m_balIdx = mh.indexOf('Balance');
+  const m_statIdx = mh.indexOf('Status');
+  const m_cdIdx = mh.indexOf('Credit Days');
+  const m_tgtIdx = mh.indexOf('Target Date');
+  const c1 = colMap1(mh);
+
+  let updated = false;
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  for(let i=1; i<mData.length; i++) {
+    const row = mData[i];
+    const pid = String(row[m_pidIdx]).trim();
+    if (stats[pid]) {
+      const oldNc = Math.round(toNum(row[m_ncIdx])*100)/100;
+      const oldPa = Math.round(toNum(row[m_paIdx])*100)/100;
+      const checkNc = Math.round(stats[pid].db*100)/100;
+      const checkPa = Math.round(stats[pid].cr*100)/100;
+      
+      if (oldNc !== checkNc || oldPa !== checkPa) {
+        const op = toNum(row[m_obIdx]);
+        const nc = stats[pid].db;
+        const pa = stats[pid].cr;
+        const td = op + nc;
+        const bal = td - pa;
+
+        monthSheet.getRange(i+1, c1['New Credit']).setValue(nc);
+        monthSheet.getRange(i+1, c1['Paid Amount']).setValue(pa);
+        monthSheet.getRange(i+1, c1['Total Debt']).setValue(td);
+        monthSheet.getRange(i+1, c1['Balance']).setValue(bal);
+        
+        let st = row[m_statIdx];
+        const cd = row[m_cdIdx];
+        const tD = parseD(row[m_tgtIdx]);
+        
+        if (cd === 'ADVANCE') {
+          st = 'ADVANCE';
+        } else if (bal <= 0) {
+          st = 'PAID';
+        } else if (tD) {
+          const df = Math.ceil((tD-today)/86400000);
+          if (df < 0) st = 'OVERDUE'; 
+          else if (df <= 2) st = 'DUE SOON';
+          else st = 'ACTIVE';
+        } else {
+          st = 'ACTIVE';
+        }
+        
+        monthSheet.getRange(i+1, c1['Status']).setValue(st);
+        updated = true;
+      }
+    }
+  }
+  
+  if (updated) SpreadsheetApp.flush();
+}
+
+function getMonthData(monthKey){
+  monthKey=monthKey||mk();
+  const sh=SS().getSheetByName(CFG.MONTHLY_PREFIX+monthKey);
+  if(!sh||sh.getLastRow()<2) return[];
+  
+  carryForward(sh, monthKey);
+  
+  try {
+    syncMonthlyFromLedger(monthKey); // Automatically sync on load!
+  } catch(e) {
+    console.log("Error syncing month from ledger", e);
+  }
+
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  return d.slice(1).map(r=>{
+    const o={}; h.forEach((k,i)=>o[k]=r[i]);
+    ['Invoice Date','Target Date','Last Payment Date','Updated At'].forEach(k=>{
+      if(o[k] instanceof Date) o[k]=fmtDate(o[k]);
+    });
+    ['New Credit','Total Debt','Paid Amount','Balance','Opening Balance','Overdue Days','Score'].forEach(k=>{
+      o[k]=toNum(o[k]);
+    });
+    return o;
+  });
+}
+
+function updateMonthRow(monthKey,rowId,updates){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  monthKey=monthKey||mk();
+  const sh=getOrCreateMonthSheet(monthKey);
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const c=colMap1(h);
+  const fm={
+    accountName:'Account Name',contactNo:'Contact No',
+    openingBalance:'Opening Balance',newCredit:'New Credit',
+    paidAmount:'Paid Amount',creditDays:'Credit Days',
+    invoiceDate:'Invoice Date',targetDate:'Target Date',
+    lastPaymentDate:'Last Payment Date',
+    status:'Status',score:'Score',notes:'Notes'
+  };
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(rowId)){
+      const r=i+1;
+      Object.entries(updates).forEach(([k,v])=>{
+        if(fm[k]&&c[fm[k]]) sh.getRange(r,c[fm[k]]).setValue(v);
+      });
+      const row=sh.getRange(r,1,1,h.length).getValues()[0];
+      const rc=colMap(h);
+      const op=toNum(row[rc['Opening Balance']]);
+      const nc=toNum(row[rc['New Credit']]);
+      const pp=toNum(row[rc['Paid Amount']]);
+      const td=op+nc;
+      const bal=td-pp;
+      sh.getRange(r,c['Total Debt']).setValue(td);
+      sh.getRange(r,c['Balance']).setValue(bal);
+      if(!updates.status){
+        const target=parseD(row[rc['Target Date']]);
+        const now=new Date(); now.setHours(0,0,0,0);
+        const cd=row[rc['Credit Days']];
+        let st='ACTIVE';
+        if(cd==='ADVANCE') st='ADVANCE';
+        else if(bal<=0) st='PAID';
+        else if(target){
+          const df=Math.ceil((target-now)/86400000);
+          if(df<0) st='OVERDUE'; else if(df<=2) st='DUE SOON';
+        }
+        sh.getRange(r,c['Status']).setValue(st);
+        const ov=target?Math.max(Math.floor((now-target)/86400000),0):0;
+        sh.getRange(r,c['Overdue Days']).setValue(ov);
+      }
+      sh.getRange(r,c['Updated At']).setValue(fmtDate(new Date()));
+      return{success:true};
+    }
+  }
+  throw new Error('Row not found: '+rowId+' in month: '+monthKey);
+}
+
+function addCredit(partyId,amount,notes,monthKey){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  monthKey=monthKey||mk();
+  const sh=getOrCreateMonthSheet(monthKey);
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const c=colMap(h); const c1=colMap1(h);
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][c['Party ID']])===String(partyId)){
+      const r=i+1;
+      const oldTotalDebt = toNum(d[i][c['Total Debt']]);
+      const oldPaidAmount = toNum(d[i][c['Paid Amount']]);
+      const oldNewCredit = toNum(d[i][c['New Credit']]);
+      const oldBalance = oldTotalDebt - oldPaidAmount;
+      
+      const newAmount = toNum(amount);
+      const newNewCredit = oldNewCredit + newAmount;
+      const newTotalDebt = oldTotalDebt + newAmount;
+      const newBalance = newTotalDebt - oldPaidAmount;
+      
+      const cd=d[i][c['Credit Days']];
+      const dn=cdNum(cd);
+      const now=new Date();
+      const target=dn===0?fmtDate(now):fmtDate(addDays(now,dn));
+      const today=new Date(); today.setHours(0,0,0,0);
+      const tD=parseD(target);
+      let st=cd==='ADVANCE'?'ADVANCE':'ACTIVE';
+      if(cd!=='ADVANCE'&&tD){
+        const df=Math.ceil((tD-today)/86400000);
+        if(newBalance===0) st='PAID'; else if(df<0) st='OVERDUE'; else if(df<=2) st='DUE SOON';
+      }
+
+      sh.getRange(r,c1['New Credit']).setValue(newNewCredit);
+      sh.getRange(r,c1['Total Debt']).setValue(newTotalDebt);
+      sh.getRange(r,c1['Balance']).setValue(newBalance);
+      
+      sh.getRange(r,c1['Invoice Date']).setValue(fmtDate(now));
+      sh.getRange(r,c1['Target Date']).setValue(target);
+      sh.getRange(r,c1['Notes']).setValue(notes||'');
+      sh.getRange(r,c1['Status']).setValue(newBalance===0?'PAID':st);
+      sh.getRange(r,c1['Updated At']).setValue(fmtDate(now));
+      
+      addLedgerEntry({
+        partyId,
+        accountName:d[i][c['Account Name']],
+        month:monthKey,
+        openingBalance:oldBalance,
+        debit:newAmount,
+        credit:0,
+        closingBalance:newBalance,
+        status:st,
+        notes:notes||''
+      });
+      return{success:true,totalDebt:newTotalDebt,balance:newBalance,targetDate:target};
+    }
+  }
+  throw new Error('Party not found in month: '+monthKey);
+}
+
+function recordPayment(partyId,amount,method,reference,notes,monthKey){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  monthKey = monthKey || mk();
+  const sh = getOrCreateMonthSheet(monthKey);
+  const d = sh.getDataRange().getValues(); 
+  const h = d[0];
+  const c = colMap(h); 
+  const c1 = colMap1(h);
+  
+  for(let i=1; i<d.length; i++){
+    if(String(d[i][c['Party ID']]) === String(partyId)){
+      const r = i+1;
+      const oldTotalDebt = toNum(d[i][c['Total Debt']]);
+      const oldPaidAmount = toNum(d[i][c['Paid Amount']]);
+      const paymentAmount = toNum(amount);
+      
+      const newPaidAmount = oldPaidAmount + paymentAmount;
+      const newBalance = oldTotalDebt - newPaidAmount;
+
+      const cs = parseInt(d[i][c['Score']]) || 50;
+      const target = parseD(d[i][c['Target Date']]);
+      const today = new Date(); today.setHours(0,0,0,0);
+      const dl = target ? Math.floor((today-target)/86400000) : 0;
+      const sa = newBalance<=0 ? (dl<=0?10:dl<=7?5:dl<=15?0:-10) : Math.max(2-Math.min(dl,10),-8);
+      const ns = Math.min(100, Math.max(0, cs+sa));
+      const st = newBalance<=0 ? 'PAID' : dl>0 ? 'OVERDUE' : 'ACTIVE';
+      
+      sh.getRange(r,c1['Paid Amount']).setValue(newPaidAmount);
+      sh.getRange(r,c1['Balance']).setValue(newBalance);
+      sh.getRange(r,c1['Last Payment Date']).setValue(fmtDate(new Date()));
+      sh.getRange(r,c1['Status']).setValue(st);
+      sh.getRange(r,c1['Score']).setValue(ns);
+      sh.getRange(r,c1['Overdue Days']).setValue(Math.max(dl,0));
+      sh.getRange(r,c1['Updated At']).setValue(fmtDate(new Date()));
+      
+      updatePartyScore(partyId, ns);
+      addLedgerEntry({
+        partyId,
+        accountName: d[i][c['Account Name']],
+        month: monthKey,
+        openingBalance: oldTotalDebt - oldPaidAmount, 
+        debit: 0,
+        credit: paymentAmount,
+        closingBalance: newBalance,
+        status: st,
+        notes: `${method||'Cash'} ${reference||'-'} ${notes||''}`
+      });
+      return {success:true, newBal:newBalance, newScore:ns, newStatus:st};
+    }
+  }
+  throw new Error('Party not found in month sheet');
+}
+
+function addLedgerEntry(e){
+  const sh=ensureSheet(CFG.SH.LEDGER,CFG.COLS.LEDGER,'#065f46');
+  const data = sh.getDataRange().getValues();
+  const h = data[0];
+  
+  const colMap = {};
+  h.forEach((header, index) => {
+    colMap[header.toString().trim().toLowerCase()] = index;
+  });
+
+  const newRow = new Array(h.length).fill("");
+
+  const setValue = (targetHeaderNames, value) => {
+    for (let name of targetHeaderNames) {
+      let idx = colMap[name.toLowerCase()];
+      if (idx !== undefined) {
+        newRow[idx] = value;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  setValue(['Timestamp', 'Date'], new Date());
+  setValue(['Party ID'], e.partyId);
+  setValue(['Account Name', 'Account'], e.accountName || '');
+  setValue(['Month'], String(e.month || mk()));
+  setValue(['Opening Balance', 'Opening'], e.openingBalance || 0);
+  setValue(['Debit (New Credit)', 'Debit (Credit)', 'Debit'], e.debit || 0);
+  setValue(['Credit (Payment)', 'Credit (Payment)', 'Credit'], e.credit || 0);
+  setValue(['Closing Balance', 'Closing'], e.closingBalance || 0);
+  setValue(['Status'], e.status || '');
+  setValue(['Collector', 'User'], Session.getActiveUser().getEmail());
+  setValue(['Notes'], e.notes || '');
+
+  sh.appendRow(newRow);
+}
+
+function getLedger(monthFilter){
+  const sh=SS().getSheetByName(CFG.SH.LEDGER);
+  if(!sh||sh.getLastRow()<2) return[];
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  
+  const findIdx = (keywords) => {
+    return h.findIndex(hdr => {
+      const s = hdr.toString().toLowerCase();
+      return keywords.some(k => s.includes(k.toLowerCase()));
+    });
+  };
+
+  const idxTs = findIdx(['timestamp', 'date']);
+  const idxParty = findIdx(['party id']);
+  const idxAcc = findIdx(['account', 'name']);
+  const idxMnth = findIdx(['month']);
+  const idxOp = findIdx(['opening']);
+  const idxDb = findIdx(['debit', 'new credit']);
+  const idxCr = findIdx(['credit', 'payment']);
+  const idxCl = findIdx(['closing']);
+  const idxSt = findIdx(['status']);
+  const idxNt = findIdx(['notes']);
+
+  const rows=d.slice(1).map(r=>{
+    const getV = (idx) => idx !== -1 ? r[idx] : 0;
+    
+    let dateValue = '';
+    if (idxTs !== -1 && r[idxTs]) {
+      const ts = r[idxTs];
+      dateValue = (ts instanceof Date) ? fmtDate(ts) : String(ts);
+    }
+
+    let monthName = '';
+    let monthKey = '';
+    if (idxMnth !== -1 && r[idxMnth]) {
+      const m = r[idxMnth];
+      if (m instanceof Date) {
+        monthName = Utilities.formatDate(m, Session.getScriptTimeZone(), 'MMMM');
+        monthKey = Utilities.formatDate(m, Session.getScriptTimeZone(), 'yyyy-MM');
+      } else {
+        monthName = String(m);
+        monthKey = String(m); 
+      }
+    }
+
+    return {
+      'Timestamp': dateValue,
+      'Party ID': idxParty !== -1 ? r[idxParty] : '',
+      'Account Name': idxAcc !== -1 ? r[idxAcc] : '',
+      'Month': monthKey,        
+      'MonthName': monthName,   
+      'Opening Balance': toNum(getV(idxOp)),
+      'Debit (New Credit)': toNum(getV(idxDb)),
+      'Credit (Payment)': toNum(getV(idxCr)),
+      'Closing Balance': toNum(getV(idxCl)),
+      'Status': idxSt !== -1 ? r[idxSt] : '',
+      'Notes': idxNt !== -1 ? r[idxNt] : ''
+    };
+  });
+
+  if(monthFilter && typeof monthFilter==='string' && monthFilter.trim() !== '') {
+    let filterFormatted = monthFilter;
+    if(monthFilter.includes(' ')) {
+       const parts = monthFilter.split(' ');
+       const d = new Date(parts[1] + '-' + parts[0] + '-01');
+       if(!isNaN(d.getTime())) filterFormatted = Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM');
+    }
+    return rows.filter(r => String(r['Month']).trim() === String(filterFormatted).trim());
   }
   return rows;
 }
-function updateRow(sheetName, rowIndex, updates) {
-  const sheet = getDB().getSheetByName(sheetName);
-  if (!sheet) return false;
-  const headers = getHeaders(sheet);
-  for (let key in updates) {
-    let colIndex = headers.indexOf(key);
-    if (colIndex > -1) sheet.getRange(rowIndex, colIndex + 1).setValue(updates[key]);
-  }
-  return true;
+
+function getContacts(partyId){
+  const sh=SS().getSheetByName(CFG.SH.CONTACTS);
+  if(!sh||sh.getLastRow()<2) return[];
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const all=d.slice(1).map(r=>{ const o={}; h.forEach((k,i)=>o[k]=r[i]); return o; });
+  return partyId?all.filter(c=>String(c['Party ID'])===String(partyId)):all;
 }
-function addRow(sheetName, rowData) {
-  const sheet = getDB().getSheetByName(sheetName);
-  if (!sheet) return;
-  const headers = getHeaders(sheet);
-  const newRow = [];
-  for (let i = 0; i < headers.length; i++) {
-    newRow.push(rowData[headers[i]] !== undefined ? rowData[headers[i]] : "");
+function addContact(data){
+  const sh=ensureSheet(CFG.SH.CONTACTS, CFG.COLS.CONTACTS,'#0e7490');
+  const id=uid('C');
+  sh.appendRow([id,data.partyId||'',data.name||'',data.phone||'',data.email||'',data.role||'',new Date(),new Date()]);
+  return id;
+}
+function updateContact(contactId,updates){
+  const sh=SS().getSheetByName(CFG.SH.CONTACTS);
+  const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap1(h);
+  const fm={name:'Name',phone:'Phone',email:'Email',role:'Role'};
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(contactId)){
+      Object.entries(updates).forEach(([k,v])=>{ if(fm[k]&&c[fm[k]]) sh.getRange(i+1,c[fm[k]]).setValue(v); });
+      sh.getRange(i+1,c['Updated At']).setValue(new Date());
+      return true;
+    }
   }
-  sheet.appendRow(newRow);
+  throw new Error('Contact not found');
+}
+function deleteContact(id){
+  const sh=SS().getSheetByName(CFG.SH.CONTACTS);
+  const d=sh.getDataRange().getValues();
+  for(let i=1;i<d.length;i++){ if(String(d[i][0])===String(id)){ sh.deleteRow(i+1); return true; } }
+  throw new Error('Contact not found');
 }
 
-// ============== MONTHLY SYNC FIX ==============
-DB_FUNCTIONS.syncMonthlyFromLedger = function(mk) {
-  const ledger = getSheetData("Ledger");
-  const monthData = getSheetData(mk);
-  if(!monthData.length) return false;
-
-  const filteredLedger = ledger.filter(l => l.Month === mk || String(l.Month).includes(mk));
-  filteredLedger.sort((a, b) => new Date(a.Timestamp).getTime() - new Date(b.Timestamp).getTime());
-
-  let stats = {};
-  filteredLedger.forEach(l => {
-    const pid = String(l["Party ID"]);
-    if (!stats[pid]) {
-      stats[pid] = { op: Number(l["Opening Balance"])||0, db: 0, cr: 0 };
+function getTasks(partyId){
+  const sh=SS().getSheetByName(CFG.SH.TASKS);
+  if(!sh||sh.getLastRow()<2) return[];
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const all=d.slice(1).map(r=>{ const o={}; h.forEach((k,i)=>o[k]=r[i]); return o; });
+  return partyId?all.filter(t=>String(t['Party ID'])===String(partyId)):all;
+}
+function addTask(data){
+  const sh=ensureSheet(CFG.SH.TASKS, CFG.COLS.TASKS,'#6d28d9');
+  const id=uid('T');
+  sh.appendRow([id,data.partyId||'',data.title||'',data.description||'',
+    data.targetDate||data.dueDate||'',data.assignedTo||'',data.status||'Pending',new Date(),new Date()]);
+  return id;
+}
+function updateTask(taskId,updates){
+  const sh=SS().getSheetByName(CFG.SH.TASKS);
+  const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap1(h);
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(taskId)){
+      const fm={title:'Title',description:'Description',targetDate:'Target Date',
+                dueDate:'Target Date',assignedTo:'Assigned To',status:'Status',Status:'Status'};
+      Object.entries(updates).forEach(([k,v])=>{ if(fm[k]&&c[fm[k]]) sh.getRange(i+1,c[fm[k]]).setValue(v); });
+      sh.getRange(i+1,c['Updated At']).setValue(new Date());
+      return true;
     }
-    // Safeguard against Double-Entry bug in ledger where debit & credit both marked
-    let debit = Number(l["Debit (New Credit)"])||0;
-    let credit = Number(l["Credit (Payment)"])||0;
-    if (debit > 0 && credit > 0 && debit === credit) {
-       // if we have that weird bug where they are exactly the same, zero the credit out unless it's a payment sheet
-       if(String(l["Notes"]).toLowerCase().includes("pay") || String(l["Notes"]).toLowerCase().includes("neft")) {
-           debit = 0;
-       } else {
-           credit = 0;
-       }
-    }
-    
-    stats[pid].db += debit;
-    stats[pid].cr += credit;
-  });
+  }
+  throw new Error('Task not found');
+}
+function deleteTask(id){
+  const sh=SS().getSheetByName(CFG.SH.TASKS);
+  const d=sh.getDataRange().getValues();
+  for(let i=1;i<d.length;i++){ if(String(d[i][0])===String(id)){ sh.deleteRow(i+1); return true; } }
+  throw new Error('Task not found');
+}
 
-  monthData.forEach(r => {
-    const pid = String(r["Party ID"]);
-    if (stats[pid]) {
-      const s = stats[pid];
-      updateRow(mk, r._rowIndex, {
-        "Opening Balance": s.op,
-        "New Credit": s.db,
-        "Total Debt": s.op + s.db,
-        "Paid Amount": s.cr,
-        "Balance": s.op + s.db - s.cr
+function listLiftingMonths(){
+  const sheets = SS().getSheets();
+  const months = [];
+  for (let i = 0; i < sheets.length; i++) {
+    const name = sheets[i].getName();
+    if (name.indexOf(CFG.LIFTING_PREFIX) === 0) {
+      months.push(name.replace(CFG.LIFTING_PREFIX, ''));
+    }
+  }
+  months.sort();
+  return months;
+}
+
+function getLiftingData(monthKey){
+  monthKey = monthKey || mk();
+  const sheetName = CFG.LIFTING_PREFIX + monthKey;
+  let sh = SS().getSheetByName(sheetName);
+  if(!sh) sh = ensureLiftingSheet(monthKey);
+  if(!sh || sh.getLastRow() < 2) return [];
+  const d = sh.getDataRange().getValues();
+  const h = d[0];
+  const result = [];
+  for(let i = 1; i < d.length; i++){
+    const row = d[i];
+    if(!row[0] && !row[1]) continue;
+    const obj = {};
+    for(let j = 0; j < h.length; j++){
+      let val = row[j];
+      if(val instanceof Date) val = fmtDate(val);
+      obj[h[j]] = val;
+    }
+    ['Target Quantity (kg)', 'Delivered Quantity (kg)', 'Remaining (kg)', 'Completion %', 'Last Delivery Qty']
+      .forEach(f => { if(obj[f] !== undefined) obj[f] = parseFloat(obj[f]) || 0; });
+    result.push(obj);
+  }
+  return result;
+}
+
+function updateLiftingTarget(monthKey,rowId,updates){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  monthKey=monthKey||mk();
+  const sh=getOrCreateLiftingSheet(monthKey);
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const c=colMap1(h);
+  const fm={
+    targetQuantity:'Target Quantity (kg)',
+    deliveryFrequency:'Delivery Frequency',
+    preferredDay:'Preferred Day'
+  };
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(rowId)){
+      const r=i+1;
+      Object.entries(updates).forEach(([k,v])=>{
+        if(fm[k]&&c[fm[k]]) sh.getRange(r,c[fm[k]]).setValue(v);
       });
+      const row=sh.getRange(r,1,1,h.length).getValues()[0];
+      const rc=colMap(h);
+      const target=toNum(row[rc['Target Quantity (kg)']]);
+      const delivered=toNum(row[rc['Delivered Quantity (kg)']]);
+      const remaining=Math.max(target-delivered,0);
+      const completion=target>0?Math.min(Math.round((delivered/target)*100),100):0;
+      let status='NOT STARTED';
+      if(target===0) status='NO TARGET';
+      else if(delivered===0) status='NOT STARTED';
+      else if(delivered>=target) status='COMPLETED';
+      else status='IN PROGRESS';
+      sh.getRange(r,c['Remaining (kg)']).setValue(remaining);
+      sh.getRange(r,c['Completion %']).setValue(completion);
+      sh.getRange(r,c['Status']).setValue(status);
+      sh.getRange(r,c['Updated At']).setValue(fmtDate(new Date()));
+      return{success:true};
+    }
+  }
+  throw new Error('Row not found: '+rowId+' in month: '+monthKey);
+}
+
+function completeLiftingTarget(monthKey,rowId){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  monthKey=monthKey||mk();
+  const sh=getOrCreateLiftingSheet(monthKey);
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const c=colMap(h); const c1=colMap1(h);
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(rowId)){
+      const r=i+1;
+      const target=toNum(d[i][c['Target Quantity (kg)']]);
+      const delivered=toNum(d[i][c['Delivered Quantity (kg)']]);
+      if(target===0) throw new Error('No target set');
+      if(delivered >= target) return {success:true};
+      const remainingNeeded = target - delivered;
+      
+      sh.getRange(r,c1['Delivered Quantity (kg)']).setValue(target);
+      sh.getRange(r,c1['Remaining (kg)']).setValue(0);
+      sh.getRange(r,c1['Completion %']).setValue(100);
+      sh.getRange(r,c1['Status']).setValue('COMPLETED');
+      sh.getRange(r,c1['Last Delivery Date']).setValue(fmtDate(new Date()));
+      sh.getRange(r,c1['Last Delivery Qty']).setValue(remainingNeeded);
+      sh.getRange(r,c1['Updated At']).setValue(fmtDate(new Date()));
+      
+      addDeliveryRecord({
+        partyId:d[i][c['Party ID']],
+        accountName:d[i][c['Account Name']],
+        month:monthKey,
+        quantity:remainingNeeded,
+        cumulative:target,
+        notes:'Auto-completed target'
+      });
+      return {success:true};
+    }
+  }
+  throw new Error('Row not found: '+rowId);
+}
+
+function recordDelivery(monthKey, partyId, quantity, notes) {
+  assertRole([CFG.ROLES.ADMIN, CFG.ROLES.COLLECTOR]);
+  monthKey = monthKey || mk();
+  const sh = getOrCreateLiftingSheet(monthKey);
+  const d = sh.getDataRange().getValues(); 
+  const h = d[0];
+  const c = colMap(h); 
+  const c1 = colMap1(h);
+
+  for (let i = 1; i < d.length; i++) {
+    if (String(d[i][c['Party ID']]) === String(partyId)) {
+      const r = i + 1;
+      const target = toNum(d[i][c['Target Quantity (kg)']]);
+      const oldDelivered = toNum(d[i][c['Delivered Quantity (kg)']]);
+      
+      const tripQty = toNum(quantity);
+      const newDelivered = oldDelivered + tripQty;
+      const remaining = Math.max(target - newDelivered, 0);
+      const completion = target > 0 ? Math.min(Math.round((newDelivered / target) * 100), 100) : 0;      
+      let status = 'IN PROGRESS';
+      if (target === 0) status = 'NO TARGET';
+      else if (newDelivered >= target) status = 'COMPLETED';
+
+      sh.getRange(r, c1['Delivered Quantity (kg)']).setValue(newDelivered);
+      sh.getRange(r, c1['Remaining (kg)']).setValue(remaining);
+      sh.getRange(r, c1['Completion %']).setValue(completion);
+      sh.getRange(r, c1['Status']).setValue(status);
+      sh.getRange(r, c1['Last Delivery Date']).setValue(fmtDate(new Date()));
+      sh.getRange(r, c1['Last Delivery Qty']).setValue(tripQty);
+      sh.getRange(r, c1['Updated At']).setValue(fmtDate(new Date()));
+      
+      addDeliveryRecord({
+        partyId: partyId,
+        accountName: d[i][c['Account Name']],
+        month: monthKey,
+        quantity: tripQty,
+        cumulative: newDelivered,
+        notes: notes || ''
+      });
+
+      return { success: true };
+    }
+  }
+}
+
+function resetLiftingDeliveries(monthKey,rowId){
+  assertRole([CFG.ROLES.ADMIN,CFG.ROLES.COLLECTOR]);
+  monthKey=monthKey||mk();
+  const sh=getOrCreateLiftingSheet(monthKey);
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const c=colMap(h); const c1=colMap1(h);
+  for(let i=1;i<d.length;i++){
+    if(String(d[i][0])===String(rowId)){
+      const r=i+1;
+      const target=toNum(d[i][c['Target Quantity (kg)']]);
+      let status = target===0?'NO TARGET':'NOT STARTED';
+      sh.getRange(r,c1['Delivered Quantity (kg)']).setValue(0);
+      sh.getRange(r,c1['Remaining (kg)']).setValue(target);
+      sh.getRange(r,c1['Completion %']).setValue(0);
+      sh.getRange(r,c1['Status']).setValue(status);
+      sh.getRange(r,c1['Last Delivery Qty']).setValue(0);
+      sh.getRange(r,c1['Updated At']).setValue(fmtDate(new Date()));
+      return {success:true};
+    }
+  }
+}
+
+function addDeliveryRecord(data) {
+  const sh = ensureSheet(CFG.SH.LIFTING_HISTORY, CFG.COLS.LIFTING_HISTORY, '#9a3412');
+  let target = 0;
+  const liftSheet = SS().getSheetByName(CFG.LIFTING_PREFIX + data.month);
+  if (liftSheet) {
+    const liftData = liftSheet.getDataRange().getValues();
+    const liftH = liftData[0];
+    const pIdx = liftH.indexOf('Party ID');
+    const tIdx = liftH.indexOf('Target Quantity (kg)');
+    for (let i = 1; i < liftData.length; i++) {
+      if (String(liftData[i][pIdx]) === String(data.partyId)) {
+        target = toNum(liftData[i][tIdx]);
+        break;
+      }
+    }
+  }
+
+  const tripQty = toNum(data.quantity);
+  const cumulative = toNum(data.cumulative);
+  const remaining = Math.max(target - cumulative, 0);
+  const completion = target > 0 ? Math.min(Math.round((cumulative / target) * 100), 100) : 0;
+  
+  let status = 'IN PROGRESS';
+  if (target > 0 && remaining === 0) status = 'COMPLETED';
+  else if (target === 0) status = 'NO TARGET';
+
+  sh.appendRow([
+    new Date(), 
+    data.partyId,
+    data.accountName || '',
+    String(data.month),
+    target,
+    tripQty,
+    cumulative,
+    remaining,
+    completion,
+    status,
+    Session.getActiveUser().getEmail(),
+    data.notes || ''
+  ]);
+}
+
+function getDeliveryHistory(partyId, monthFilter){
+  const sh = SS().getSheetByName(CFG.SH.LIFTING_HISTORY);
+  if(!sh || sh.getLastRow() < 2) return [];
+  const d = sh.getDataRange().getValues();
+  const h = d[0];
+  const rows = [];
+  for(let i=1; i<d.length; i++){
+    const row = d[i];
+    if(!row[0]) continue;
+    const obj = {};
+    h.forEach((key, idx) => {
+      let val = row[idx];
+      if(val instanceof Date) val = fmtDate(val);
+      obj[key] = val;
+    });
+    rows.push(obj);
+  }
+  let filtered = rows;
+  if(partyId && partyId !== '' && partyId !== 'null'){
+    filtered = filtered.filter(r => String(r['Party ID']) === String(partyId));
+  }
+  if(monthFilter && monthFilter !== '' && monthFilter !== 'null'){
+    filtered = filtered.filter(r => String(r['Month']).trim() === String(monthFilter).trim());
+  }
+  return filtered;
+}
+
+function closeMonth(monthKey){
+  assertRole([CFG.ROLES.ADMIN]);
+  monthKey=monthKey||mk();
+  const sh=SS().getSheetByName(CFG.MONTHLY_PREFIX+monthKey);
+  if(!sh) throw new Error('Month sheet not found: '+monthKey);
+  const d=sh.getDataRange().getValues(); const h=d[0];
+  const c=colMap(h); const c1=colMap1(h);
+  let upd=0;
+  for(let i=1;i<d.length;i++){
+    const bal=toNum(d[i][c['Balance']]); const st=d[i][c['Status']];
+    if(bal>0&&st!=='PAID'){ sh.getRange(i+1,c1['Status']).setValue('OVERDUE'); upd++; }
+    else if(bal===0){ sh.getRange(i+1,c1['Status']).setValue('PAID'); }
+  }
+  const[yr,mo]=monthKey.split('-').map(Number);
+  const nk=mk(new Date(yr,mo,1));
+  ensureMonthSheet(nk);
+  ensureLiftingSheet(nk);
+  
+  const nextSh = SS().getSheetByName(CFG.MONTHLY_PREFIX+nk);
+  if(nextSh) carryForward(nextSh, nk);
+
+  return{success:true,updated:upd,nextMonth:nk};
+}
+
+function listMonths(){
+  return SS().getSheets()
+    .map(s=>s.getName())
+    .filter(n=>n.startsWith(CFG.MONTHLY_PREFIX))
+    .map(n=>n.replace(CFG.MONTHLY_PREFIX,''))
+    .sort();
+}
+
+function getAllMonthSummaries(){
+  const months=listMonths(); const out={};
+  months.forEach(monthKey=>{
+    const sh=SS().getSheetByName(CFG.MONTHLY_PREFIX+monthKey);
+    if(!sh||sh.getLastRow()<2){
+      out[monthKey]={month:monthKey,year:monthKey.split('-')[0],
+        totalDebt:0,totalCredit:0,totalPaid:0,totalBalance:0,
+        overdueCount:0,paidCount:0,activeCount:0,dueSoonCount:0,partyCount:0};
+      return;
+    }
+    const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap(h);
+    let td=0,tc=0,tp=0,tb=0,oc=0,pc=0,ac=0,dc=0;
+    d.slice(1).forEach(row=>{
+      td+=toNum(row[c['Total Debt']]); tc+=toNum(row[c['New Credit']]);
+      tp+=toNum(row[c['Paid Amount']]); tb+=toNum(row[c['Balance']]);
+      const st=row[c['Status']];
+      if(st==='PAID') pc++; else if(st==='OVERDUE') oc++;
+      else if(st==='DUE SOON') dc++; else ac++;
+    });
+    out[monthKey]={month:monthKey,year:monthKey.split('-')[0],
+      totalDebt:td,totalCredit:tc,totalPaid:tp,totalBalance:tb,
+      overdueCount:oc,paidCount:pc,activeCount:ac,dueSoonCount:dc,
+      partyCount:d.length-1};
+  });
+  return out;
+}
+
+function getSettings(){
+  const sh=SS().getSheetByName(CFG.SH.SETTINGS);
+  if(!sh||sh.getLastRow()<2) return{theme:'ocean',remindersEnabled:true,adminEmail:''};
+  const d=sh.getDataRange().getValues(); const m={};
+  d.slice(1).forEach(r=>{ let v=r[1]; if(v==='true')v=true; else if(v==='false')v=false; m[r[0]]=v; });
+  return m;
+}
+function saveSetting(key,value){
+  const sh=SS().getSheetByName(CFG.SH.SETTINGS);
+  const d=sh.getDataRange().getValues();
+  for(let i=1;i<d.length;i++){ if(d[i][0]===key){ sh.getRange(i+1,2).setValue(value); return; } }
+  sh.appendRow([key,value]);
+}
+
+function getDashboardSummary(){
+  autoCreateNextMonth();
+  const curMk=mk();
+  const md=getMonthData(curMk);
+  const ams=getAllMonthSummaries();
+  const parties=getAllPartiesRaw();
+  const today=new Date(); today.setHours(0,0,0,0);
+  const ds=md.filter(r=>{
+    if(r['Balance']<=0) return false;
+    const t=parseD(r['Target Date']); if(!t) return false;
+    const df=Math.ceil((t-today)/86400000);
+    return df>=-1&&df<=2;
+  });
+  const aging={'0-7':0,'8-15':0,'16-30':0,'30+':0};
+  md.forEach(r=>{
+    if(r['Balance']<=0) return;
+    const dv=parseInt(r['Overdue Days'])||0;
+    if(dv>30) aging['30+']+=r['Balance'];
+    else if(dv>15) aging['16-30']+=r['Balance'];
+    else if(dv>7) aging['8-15']+=r['Balance'];
+    else if(dv>0) aging['0-7']+=r['Balance'];
+  });
+  return{
+    currentMonth:curMk,
+    allMonths:listMonths(),
+    allMonthSummaries:ams,
+    totalOutstanding:md.reduce((s,r)=>s+r['Balance'],0),
+    totalCredit:md.reduce((s,r)=>s+r['New Credit'],0),
+    totalCollected:md.reduce((s,r)=>s+r['Paid Amount'],0),
+    overdueCount:md.filter(r=>r['Status']==='OVERDUE').length,
+    paidCount:md.filter(r=>r['Status']==='PAID').length,
+    dueSoonCount:md.filter(r=>r['Status']==='DUE SOON').length,
+    activeCount:md.filter(r=>r['Status']==='ACTIVE'||r['Status']==='ADVANCE').length,
+    avgScore:parties.length?Math.round(parties.reduce((s,p)=>s+(parseInt(p['Score'])||50),0)/parties.length):0,
+    aging:aging,
+    dueSoon:ds
+  };
+}
+
+function sendReminderEmails(){
+  const s=getSettings(); if(!s.remindersEnabled) return 0;
+  const curMk=mk();
+  const sh=SS().getSheetByName(CFG.MONTHLY_PREFIX+curMk);
+  if(!sh||sh.getLastRow()<2) return 0;
+  const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap(h);
+  const em={}; getAllPartiesRaw().forEach(p=>em[p['Party ID']]=p['Email']);
+  const today=new Date(); today.setHours(0,0,0,0);
+  let sent=0;
+  d.slice(1).forEach(row=>{
+    const bal=toNum(row[c['Balance']]); if(bal<=0) return;
+    const email=em[row[c['Party ID']]];
+    if(!email||!email.includes('@')) return;
+    const target=parseD(row[c['Target Date']]); if(!target) return;
+    const diff=Math.ceil((target-today)/86400000);
+    if(diff>=0&&diff<=2){
+      try{MailApp.sendEmail(email,
+        `⏰ Payment Due ${diff===0?'TODAY':diff+'d'} – ${row[c['Account Name']]}.`,
+        `Dear ${row[c['Account Name']]},\n\nBalance ₹${bal.toLocaleString('en-IN')} is due on ${row[c['Target Date']]}.\n\nPlease arrange payment at the earliest.\n\nCreditFlow PRO`);
+        sent++;
+      }catch(e){}
     }
   });
-  return true;
+  return sent;
 }
 
-// ============== QUERIES ==============
-DB_FUNCTIONS.getParties = function() { return getSheetData("Parties"); };
-DB_FUNCTIONS.getContacts = function() { return getSheetData("Contacts"); };
-DB_FUNCTIONS.getTasks = function() { return getSheetData("Tasks"); };
-DB_FUNCTIONS.listLiftingMonths = function() { return getSheetData("Settings").filter(r => r.Key === 'lifting_months'); };
-DB_FUNCTIONS.getSettings = function() { return getSheetData("Settings"); };
-
-DB_FUNCTIONS.getLedger = function(mf) {
-  let ledger = getSheetData("Ledger");
-  if (mf) ledger = ledger.filter(l => String(l.Month) === mf || String(l.MonthName) === mf);
-  return ledger.reverse();
-};
-
-DB_FUNCTIONS.getDeliveryHistory = function(partyId, mf) {
-  let hist = getSheetData("Deliveries");
-  if(partyId) hist = hist.filter(d => d["Party ID"] === partyId);
-  return hist.reverse();
-}
-
-DB_FUNCTIONS.getMonthData = function(mk) {
-  DB_FUNCTIONS.syncMonthlyFromLedger(mk); // Auto-sync on fetch
-  return getSheetData(mk);
-};
-
-DB_FUNCTIONS.getLiftingData = function(mk) { return getSheetData(mk + " Target"); }
-
-// ============== MUTATIONS ==============
-DB_FUNCTIONS.addParty = function(data) { addRow("Parties", data); return true; };
-DB_FUNCTIONS.updateParty = function(id, updates) {
-  const parties = getSheetData("Parties");
-  const row = parties.find(p => p.partyId === id);
-  if(row) updateRow("Parties", row._rowIndex, updates);
-  return true;
-};
-DB_FUNCTIONS.deleteParty = function(id) { /* Implement deletion */ return true; };
-
-// Contacts & Tasks
-DB_FUNCTIONS.addContact = function(data) { addRow("Contacts", Object.assign(data, {id: "C_"+Date.now()})); return true;}
-DB_FUNCTIONS.deleteContact = function(id) { return true; }
-DB_FUNCTIONS.addTask = function(data) { addRow("Tasks", Object.assign(data, {id: "T_"+Date.now()})); return true;}
-DB_FUNCTIONS.updateTask = function(id, updates) {
-  const ts = getSheetData("Tasks");
-  const row = ts.find(t => t.id === id);
-  if(row) updateRow("Tasks", row._rowIndex, updates);
-  return true;
-}
-DB_FUNCTIONS.deleteTask = function(id) { return true; }
-
-// Month Data Updates
-DB_FUNCTIONS.updateMonthRow = function(mk, rowId, updates) {
-  const data = getSheetData(mk);
-  const row = data.find(r => r["Row ID"] === rowId);
-  if (row) {
-    updateRow(mk, row._rowIndex, updates);
-    DB_FUNCTIONS.syncMonthlyFromLedger(mk); // re-sync balance properly
-    return true;
+function updateAllScores(){
+  const curMk=mk();
+  const sh=SS().getSheetByName(CFG.MONTHLY_PREFIX+curMk);
+  if(!sh||sh.getLastRow()<2) return;
+  const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap(h); const c1=colMap1(h);
+  const today=new Date(); today.setHours(0,0,0,0);
+  for(let i=1;i<d.length;i++){
+    const bal=toNum(d[i][c['Balance']]); if(bal<=0) continue;
+    const target=parseD(d[i][c['Target Date']]); if(target){
+      const ov=Math.floor((today-target)/86400000); if(ov<=0) continue;
+      const adj=ov>30?-20:ov>15?-10:ov>7?-5:-2;
+      const ns=Math.min(100,Math.max(0,(parseInt(d[i][c['Score']])||50)+adj));
+      sh.getRange(i+1,c1['Score']).setValue(ns);
+      sh.getRange(i+1,c1['Status']).setValue('OVERDUE');
+      sh.getRange(i+1,c1['Overdue Days']).setValue(ov);
+      updatePartyScore(d[i][c['Party ID']],ns);
+    }
   }
-  return false;
-};
-
-// LEDGER MUTATIONS
-DB_FUNCTIONS.addCredit = function(partyId, amt, notes, mk) {
-  let pData = getSheetData(mk).find(r => r["Party ID"] === partyId);
-  if(!pData) return false;
-  
-  // Find current actual balance (Opening + Debit - Credit)
-  let op = Number(pData["Opening Balance"])||0;
-  let db = Number(pData["New Credit"])||0;
-  let cr = Number(pData["Paid Amount"])||0;
-  let curBal = op + db - cr;
-  
-  addRow("Ledger", {
-    "Timestamp": new Date().toISOString().split('T')[0],
-    "Party ID": partyId,
-    "Account Name": pData["Account Name"],
-    "Month": mk,
-    "Opening Balance": curBal,
-    "Debit (New Credit)": amt,
-    "Credit (Payment)": 0,
-    "Closing Balance": curBal + amt,
-    "Status": "ACTIVE",
-    "Notes": notes
-  });
-  
-  DB_FUNCTIONS.syncMonthlyFromLedger(mk); // Auto fix month stats
-  return true;
-};
-
-DB_FUNCTIONS.recordPayment = function(partyId, amt, method, ref, notes, mk) {
-  let pData = getSheetData(mk).find(r => r["Party ID"] === partyId);
-  if(!pData) return false;
-  
-  let op = Number(pData["Opening Balance"])||0;
-  let db = Number(pData["New Credit"])||0;
-  let cr = Number(pData["Paid Amount"])||0;
-  let curBal = op + db - cr;
-  
-  addRow("Ledger", {
-    "Timestamp": new Date().toISOString().split('T')[0],
-    "Party ID": partyId,
-    "Account Name": pData["Account Name"],
-    "Month": mk,
-    "Opening Balance": curBal,
-    "Debit (New Credit)": 0,
-    "Credit (Payment)": amt,
-    "Closing Balance": curBal - amt,
-    "Status": "ACTIVE",
-    "Notes": notes + " | " + method + " " + ref
-  });
-  
-  DB_FUNCTIONS.syncMonthlyFromLedger(mk); // Auto fix month stats
-  return true;
-};
-
-// LIFTING
-DB_FUNCTIONS.updateLiftingTarget = function(mk, rowId, updates) {
-  const data = getSheetData(mk+" Target");
-  const row = data.find(r => r["Row ID"] === rowId);
-  if (row) updateRow(mk+" Target", row._rowIndex, updates);
-}
-DB_FUNCTIONS.resetLiftingDeliveries = function(mk, rowId) {
-  const data = getSheetData(mk+" Target");
-  const row = data.find(r => r["Row ID"] === rowId);
-  if (row) updateRow(mk+" Target", row._rowIndex, {"Fulfilled": 0});
-}
-DB_FUNCTIONS.recordDelivery = function(mk, partyId, qty, notes) {
-  addRow("Deliveries", {
-    "Timestamp": new Date().toISOString(),
-    "Party ID": partyId,
-    "Month": mk,
-    "Quantity": qty,
-    "Notes": notes
-  });
 }
