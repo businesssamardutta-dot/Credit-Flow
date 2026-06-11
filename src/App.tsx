@@ -45,17 +45,37 @@ export default function App() {
 
   // Authenticate user via Apps Script
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const emailFromUrl = params.get('auth_email');
+    let emailFromUrl = null;
+    let savedEmail = null;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      emailFromUrl = params.get('auth_email');
+    } catch (e) {
+      console.warn('Cannot parse search params', e);
+    }
+
     if (emailFromUrl) {
-      sessionStorage.setItem('auth_email', emailFromUrl);
-      window.history.replaceState({}, document.title, window.location.pathname);
+      try {
+        sessionStorage.setItem('auth_email', emailFromUrl);
+      } catch (e) {
+        console.warn('sessionStorage setItem failed', e);
+      }
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (e) {
+        console.warn('history replaceState failed', e);
+      }
       setAuthEmail(emailFromUrl);
       setAuthChecking(false);
       return;
     }
 
-    const savedEmail = sessionStorage.getItem('auth_email');
+    try {
+      savedEmail = sessionStorage.getItem('auth_email');
+    } catch (e) {
+      console.warn('sessionStorage getItem failed', e);
+    }
+
     if (savedEmail) {
       setAuthEmail(savedEmail);
       setAuthChecking(false);
@@ -63,7 +83,17 @@ export default function App() {
       // Redirect to Google Apps Script for Google Authentication
       const scriptUrl = 'https://script.google.com/macros/s/AKfycbyewh1tpN0kyvArPAIC_436tepFY1R6gph-f5vonqpeM0AVhVyyjxj5hqFq2wi0tqeHXA/exec';
       const redirectUri = window.location.origin + window.location.pathname;
-      window.location.href = `${scriptUrl}?action=auth&returnUrl=${encodeURIComponent(redirectUri)}`;
+      const targetUrl = `${scriptUrl}?action=auth&returnUrl=${encodeURIComponent(redirectUri)}`;
+
+      try {
+        if (window.top && window.top !== window) {
+          window.top.location.href = targetUrl;
+        } else {
+          window.location.href = targetUrl;
+        }
+      } catch (e) {
+        window.location.href = targetUrl;
+      }
     }
   }, []);
 

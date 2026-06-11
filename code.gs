@@ -55,7 +55,33 @@ function doGet(e) {
     const email = Session.getActiveUser().getEmail();
     const returnUrl = e.parameter.returnUrl;
     if (returnUrl) {
-      return HtmlService.createHtmlOutput('<script>window.location.href="' + returnUrl + '?auth_email=" + encodeURIComponent("' + (email || '') + '");</script>');
+      const destUrl = returnUrl + (returnUrl.indexOf('?') === -1 ? '?' : '&') + 'auth_email=' + encodeURIComponent(email || '');
+      const htmlOutput = HtmlService.createHtmlOutput(
+        '<!DOCTYPE html>' +
+        '<html>' +
+        '<head><base target="_top"></head>' +
+        '<body>' +
+        '<p style="font-family:sans-serif; text-align:center; margin-top:50px; color:#333;">' +
+        'Authenticating your Google Account... If you are not redirected automatically, ' +
+        '<a href="' + destUrl + '" target="_top" id="redir-link" style="color:#2563eb; font-weight:bold; text-decoration:underline;">click here</a>.' +
+        '</p>' +
+        '<script>' +
+        '  var dest = "' + destUrl + '";' +
+        '  try {' +
+        '    var link = document.getElementById("redir-link");' +
+        '    link.click();' +
+        '  } catch(e) {' +
+        '    try {' +
+        '      window.open(dest, "_top");' +
+        '    } catch(e2) {' +
+        '      window.top.location.href = dest;' +
+        '    }' +
+        '  }' +
+        '</script>' +
+        '</body>' +
+        '</html>'
+      );
+      return htmlOutput;
     }
   }
   return ContentService.createTextOutput("Backend Active");
