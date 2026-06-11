@@ -40,62 +40,6 @@ export default function App() {
   const [settings, setSettings] = useState({ theme: 'ocean', remindersEnabled: true });
   const [loading, setLoading] = useState(true);
   const [snack, setSnack] = useState<any>(null);
-  const [authEmail, setAuthEmail] = useState<string | null>(null);
-  const [authChecking, setAuthChecking] = useState(true);
-
-  // Authenticate user via Apps Script
-  useEffect(() => {
-    let emailFromUrl = null;
-    let savedEmail = null;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      emailFromUrl = params.get('auth_email');
-    } catch (e) {
-      console.warn('Cannot parse search params', e);
-    }
-
-    if (emailFromUrl) {
-      try {
-        sessionStorage.setItem('auth_email', emailFromUrl);
-      } catch (e) {
-        console.warn('sessionStorage setItem failed', e);
-      }
-      try {
-        window.history.replaceState({}, document.title, window.location.pathname);
-      } catch (e) {
-        console.warn('history replaceState failed', e);
-      }
-      setAuthEmail(emailFromUrl);
-      setAuthChecking(false);
-      return;
-    }
-
-    try {
-      savedEmail = sessionStorage.getItem('auth_email');
-    } catch (e) {
-      console.warn('sessionStorage getItem failed', e);
-    }
-
-    if (savedEmail) {
-      setAuthEmail(savedEmail);
-      setAuthChecking(false);
-    } else {
-      // Redirect to Google Apps Script for Google Authentication
-      const scriptUrl = 'https://script.google.com/macros/s/AKfycbyewh1tpN0kyvArPAIC_436tepFY1R6gph-f5vonqpeM0AVhVyyjxj5hqFq2wi0tqeHXA/exec';
-      const redirectUri = window.location.origin + window.location.pathname;
-      const targetUrl = `${scriptUrl}?action=auth&returnUrl=${encodeURIComponent(redirectUri)}`;
-
-      try {
-        if (window.top && window.top !== window) {
-          window.top.location.href = targetUrl;
-        } else {
-          window.location.href = targetUrl;
-        }
-      } catch (e) {
-        window.location.href = targetUrl;
-      }
-    }
-  }, []);
 
   const toast = useCallback((msg: string, type = 'info') => {
     setSnack({ msg, type });
@@ -121,50 +65,12 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
-    if (!authChecking && authEmail) {
-      const ALLOWED_EMAILS = [
-        'sefalicommercial@gmail.com',
-        'basudebbanerjee653@gmail.com',
-        'business.samardutta@gmail.com'
-      ];
-      if (ALLOWED_EMAILS.includes(authEmail)) {
-        api.initDatabase().then(() => refresh());
-      }
-    }
-  }, [authChecking, authEmail, refresh]);
+    api.initDatabase().then(() => refresh());
+  }, [refresh]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', settings.theme || 'ocean');
   }, [settings.theme]);
-
-  if (authChecking) {
-    return <div style={{ padding: '50px', textAlign: 'center', fontSize: '18px' }}>Authenticating your Google Account...</div>;
-  }
-
-  const ALLOWED_EMAILS = [
-    'sefalicommercial@gmail.com',
-    'basudebbanerjee653@gmail.com',
-    'business.samardutta@gmail.com'
-  ];
-
-  if (!authEmail || !ALLOWED_EMAILS.includes(authEmail)) {
-    return (
-      <div style={{ padding: '60px 20px', textAlign: 'center', fontFamily: 'var(--font-sans)', color: 'var(--text-main)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
-        <div style={{ fontSize: '48px' }}>🔒</div>
-        <h2 style={{ fontSize: '24px', fontWeight: 600, color: 'var(--red)' }}>Access Denied</h2>
-        <div style={{ padding: '16px', background: 'var(--bg-main)', border: '1px solid var(--border)', borderRadius: '8px' }}>
-          <p style={{ margin: '0 0 8px 0', color: 'var(--text-muted)' }}>Logged in as:</p>
-          <strong style={{ fontSize: '18px' }}>{authEmail || 'Guest Mode'}</strong>
-        </div>
-        <p style={{ fontSize: '16px', maxWidth: '400px', lineHeight: '1.5' }}>
-          You are Not Authorise for Operate This App Please Contact to Admin
-        </p>
-        <button className="btn primary" onClick={() => { sessionStorage.clear(); window.location.reload(); }} style={{ marginTop: '10px' }}>
-          Try Another Account
-        </button>
-      </div>
-    );
-  }
 
   const saveTheme = async (t: string) => {
     setSettings(s => ({ ...s, theme: t }));
