@@ -103,6 +103,10 @@ export default function App() {
     }
   }, [authChecking, authEmail, refresh]);
 
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', settings.theme || 'ocean');
+  }, [settings.theme]);
+
   if (authChecking) {
     return <div style={{ padding: '50px', textAlign: 'center', fontSize: '18px' }}>Authenticating your Google Account...</div>;
   }
@@ -131,10 +135,6 @@ export default function App() {
       </div>
     );
   }
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', settings.theme || 'ocean');
-  }, [settings.theme]);
 
   const saveTheme = async (t: string) => {
     setSettings(s => ({ ...s, theme: t }));
