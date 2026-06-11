@@ -44,23 +44,29 @@ function PartyModal({ party, onClose, onSaved, toast }: any) {
   };
 
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className={`overlay ${busy ? 'pointer-events-none' : ''}`} onClick={e => !busy && e.target === e.currentTarget && onClose()}>
       <div className="modal">
-        <div className="modal-hdr"><h2>{party ? 'Edit' : 'Add'} Party</h2><button className="act-btn del" onClick={onClose}>✕</button></div>
+        <div className="modal-hdr"><h2>{party ? 'Edit' : 'Add'} Party</h2><button className="act-btn del" disabled={busy} onClick={onClose}>✕</button></div>
         <div className="modal-body">
           <div className="form-grid">
-            <div className="field"><label>SL No</label><input name="slNo" value={f.slNo} onChange={fc} /></div>
-            <div className="field"><label>Account Name *</label><input name="accountName" value={f.accountName} onChange={fc} /></div>
-            <div className="field"><label>Contact No</label><input name="contactNo" value={f.contactNo} onChange={fc} /></div>
-            <div className="field"><label>Email</label><input name="email" type="email" value={f.email} onChange={fc} /></div>
-            <div className="field" style={{ gridColumn: 'span 2' }}><label>Address</label><input name="address" value={f.address} onChange={fc} /></div>
-            <div className="field"><label>Credit Days</label><select name="creditDays" value={f.creditDays} onChange={fc}><option>ADVANCE</option><option>3 DAYS</option><option>7 DAYS</option><option>15 DAYS</option><option>30 DAYS</option><option>45 DAYS</option></select></div>
-            <div className="field"><label>Credit Limit (₹)</label><input name="creditLimit" type="number" value={f.creditLimit} onChange={fc} /></div>
-            <div className="field"><label>Payment Mode</label><select name="paymentMode" value={f.paymentMode} onChange={fc}><option value="">Select…</option><option>Cash</option><option>NEFT</option><option>RTGS</option><option>UPI</option><option>Cheque</option></select></div>
+            <div className="field"><label>SL No</label><input name="slNo" value={f.slNo} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Account Name *</label><input name="accountName" value={f.accountName} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Contact No</label><input name="contactNo" value={f.contactNo} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Email</label><input name="email" type="email" value={f.email} onChange={fc} disabled={busy} /></div>
+            <div className="field" style={{ gridColumn: 'span 2' }}><label>Address</label><input name="address" value={f.address} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Credit Days</label><select name="creditDays" value={f.creditDays} onChange={fc} disabled={busy}><option>ADVANCE</option><option>3 DAYS</option><option>7 DAYS</option><option>15 DAYS</option><option>30 DAYS</option><option>45 DAYS</option></select></div>
+            <div className="field"><label>Credit Limit (₹)</label><input name="creditLimit" type="number" value={f.creditLimit} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Payment Mode</label><select name="paymentMode" value={f.paymentMode} onChange={fc} disabled={busy}><option value="">Select…</option><option>Cash</option><option>NEFT</option><option>RTGS</option><option>UPI</option><option>Cheque</option></select></div>
           </div>
         </div>
-        <div className="modal-ftr"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></div>
+        <div className="modal-ftr"><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></div>
       </div>
+      {busy && (
+        <div className="global-waiting" style={{ position: 'absolute' }}>
+          <div className="spinner"></div>
+          <div className="waiting-text">PROCESSING...</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -104,20 +110,26 @@ function ContactModal({ parties, onClose, onSaved, toast }: any) {
   };
 
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className={`overlay ${busy ? 'pointer-events-none' : ''}`} onClick={e => !busy && e.target === e.currentTarget && onClose()}>
       <div className="modal">
-        <div className="modal-hdr"><h2>Add Contact</h2><button className="act-btn del" onClick={onClose}>✕</button></div>
+        <div className="modal-hdr"><h2>Add Contact</h2><button className="act-btn del" disabled={busy} onClick={onClose}>✕</button></div>
         <div className="modal-body">
           <div className="form-grid">
-            <div className="field" style={{ gridColumn: 'span 2' }}><label>Party</label><select name="partyId" value={f.partyId} onChange={fc}><option value="">Select…</option>{(parties || []).map((p: any) => <option key={p.partyId} value={p.partyId}>{p.accountName}</option>)}</select></div>
-            <div className="field"><label>Name *</label><input name="name" value={f.name} onChange={fc} /></div>
-            <div className="field"><label>Role</label><input name="role" value={f.role} onChange={fc} /></div>
-            <div className="field"><label>Phone</label><input name="phone" value={f.phone} onChange={fc} /></div>
-            <div className="field"><label>Email</label><input name="email" type="email" value={f.email} onChange={fc} /></div>
+            <div className="field" style={{ gridColumn: 'span 2' }}><label>Party</label><select name="partyId" value={f.partyId} onChange={fc} disabled={busy}><option value="">Select…</option>{(parties || []).map((p: any) => <option key={p.partyId} value={p.partyId}>{p.accountName}</option>)}</select></div>
+            <div className="field"><label>Name *</label><input name="name" value={f.name} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Role</label><input name="role" value={f.role} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Phone</label><input name="phone" value={f.phone} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Email</label><input name="email" type="email" value={f.email} onChange={fc} disabled={busy} /></div>
           </div>
         </div>
-        <div className="modal-ftr"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></div>
+        <div className="modal-ftr"><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></div>
       </div>
+      {busy && (
+        <div className="global-waiting" style={{ position: 'absolute' }}>
+          <div className="spinner"></div>
+          <div className="waiting-text">PROCESSING...</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -169,20 +181,26 @@ function TaskModal({ parties, onClose, onSaved, toast }: any) {
   };
 
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className={`overlay ${busy ? 'pointer-events-none' : ''}`} onClick={e => !busy && e.target === e.currentTarget && onClose()}>
       <div className="modal">
-        <div className="modal-hdr"><h2>Add Task</h2><button className="act-btn del" onClick={onClose}>✕</button></div>
+        <div className="modal-hdr"><h2>Add Task</h2><button className="act-btn del" disabled={busy} onClick={onClose}>✕</button></div>
         <div className="modal-body">
           <div className="form-grid">
-            <div className="field" style={{ gridColumn: 'span 2' }}><label>Party</label><select name="partyId" value={f.partyId} onChange={fc}><option value="">Select…</option>{(parties || []).map((p: any) => <option key={p.partyId} value={p.partyId}>{p.accountName}</option>)}</select></div>
-            <div className="field" style={{ gridColumn: 'span 2' }}><label>Title *</label><input name="title" value={f.title} onChange={fc} /></div>
-            <div className="field" style={{ gridColumn: 'span 2' }}><label>Description</label><input name="description" value={f.description} onChange={fc} /></div>
-            <div className="field"><label>Target Date</label><input name="dueDate" type="date" value={f.dueDate} onChange={fc} /></div>
-            <div className="field"><label>Assignee</label><input name="assignedTo" value={f.assignedTo} onChange={fc} placeholder="email" /></div>
+            <div className="field" style={{ gridColumn: 'span 2' }}><label>Party</label><select name="partyId" value={f.partyId} onChange={fc} disabled={busy}><option value="">Select…</option>{(parties || []).map((p: any) => <option key={p.partyId} value={p.partyId}>{p.accountName}</option>)}</select></div>
+            <div className="field" style={{ gridColumn: 'span 2' }}><label>Title *</label><input name="title" value={f.title} onChange={fc} disabled={busy} /></div>
+            <div className="field" style={{ gridColumn: 'span 2' }}><label>Description</label><input name="description" value={f.description} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Target Date</label><input name="dueDate" type="date" value={f.dueDate} onChange={fc} disabled={busy} /></div>
+            <div className="field"><label>Assignee</label><input name="assignedTo" value={f.assignedTo} onChange={fc} placeholder="email" disabled={busy} /></div>
           </div>
         </div>
-        <div className="modal-ftr"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></div>
+        <div className="modal-ftr"><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></div>
       </div>
+      {busy && (
+        <div className="global-waiting" style={{ position: 'absolute' }}>
+          <div className="spinner"></div>
+          <div className="waiting-text">PROCESSING...</div>
+        </div>
+      )}
     </div>
   );
 }

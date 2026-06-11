@@ -277,34 +277,40 @@ function TargetModal({row,mk,onClose,onSaved,toast}:any){
   };
 
   return (
-    <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div className={`overlay ${busy ? 'pointer-events-none' : ''}`} onClick={e=>!busy && e.target===e.currentTarget&&onClose()}>
       <div className="modal">
         <div className="modal-hdr">
           <h2>✎ Set Target — {row['Account Name']}</h2>
-          <button className="act-btn del" onClick={onClose}>✕</button>
+          <button className="act-btn del" disabled={busy} onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
           <div className="form-grid">
             <div className="field">
               <label>Monthly Target (kg)</label>
-              <input type="number" min="0" value={target} onChange={e=>setTarget(e.target.value)} placeholder="Enter kg…"/>
+              <input type="number" min="0" value={target} onChange={e=>setTarget(e.target.value)} placeholder="Enter kg…" disabled={busy} />
             </div>
             <div className="field">
               <label>Delivery Frequency</label>
-              <select value={freq} onChange={e=>setFreq(e.target.value)}>
+              <select value={freq} onChange={e=>setFreq(e.target.value)} disabled={busy}>
                 <option>Weekly</option><option>Bi-Weekly</option><option>Monthly</option>
               </select>
             </div>
             <div className="field" style={{gridColumn:'span 2'}}>
               <label>Preferred Delivery Day</label>
-              <select value={day} onChange={e=>setDay(e.target.value)}>
+              <select value={day} onChange={e=>setDay(e.target.value)} disabled={busy}>
                 {['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map(d=><option key={d}>{d}</option>)}
               </select>
             </div>
           </div>
         </div>
-        <div className="modal-ftr"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy?'Saving…':'Save Target'}</button></div>
+        <div className="modal-ftr"><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy?'Saving…':'Save Target'}</button></div>
       </div>
+      {busy && (
+        <div className="global-waiting" style={{ position: 'absolute' }}>
+          <div className="spinner"></div>
+          <div className="waiting-text">PROCESSING...</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -329,11 +335,11 @@ function DeliverModal({row,mk,onClose,onSaved,toast}:any){
   };
 
   return (
-    <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div className={`overlay ${busy ? 'pointer-events-none' : ''}`} onClick={e=>!busy && e.target===e.currentTarget&&onClose()}>
       <div className="modal">
         <div className="modal-hdr">
           <h2>📦 Record Delivery — {row['Account Name']}</h2>
-          <button className="act-btn del" onClick={onClose}>✕</button>
+          <button className="act-btn del" disabled={busy} onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
           <div className="info-box">
@@ -344,19 +350,25 @@ function DeliverModal({row,mk,onClose,onSaved,toast}:any){
           <div className="form-grid" style={{gridTemplateColumns:'1fr'}}>
             <div className="field">
               <label>Delivery Quantity (kg)</label>
-              <input type="number" min="0.1" step="0.1" value={qty} onChange={e=>setQty(e.target.value)} placeholder="Enter quantity…"/>
+              <input type="number" min="0.1" step="0.1" value={qty} onChange={e=>setQty(e.target.value)} placeholder="Enter quantity…" disabled={busy} />
             </div>
             <div className="field">
               <label>Notes (Optional)</label>
-              <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Vehicle, driver, remarks…"/>
+              <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Vehicle, driver, remarks…" disabled={busy} />
             </div>
           </div>
         </div>
         <div className="modal-ftr">
-          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
           <button className="btn primary" onClick={save} disabled={busy}>{busy?'Recording…':'📦 Record Delivery'}</button>
         </div>
       </div>
+      {busy && (
+        <div className="global-waiting" style={{ position: 'absolute' }}>
+          <div className="spinner"></div>
+          <div className="waiting-text">PROCESSING...</div>
+        </div>
+      )}
     </div>
   );
 }

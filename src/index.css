@@ -154,3 +154,7 @@ canvas{max-height:100%;}
 .sched-party-name{font-weight:700;font-size:13px;color:var(--text);}
 .sched-meta{font-size:11px;color:var(--muted);font-family:var(--font-mono);}
 .filter-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px;}
+.global-waiting{position:fixed;inset:0;background:rgba(var(--bg),0.6);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;backdrop-filter:blur(3px);cursor:wait;}
+.spinner{width:40px;height:40px;border:4px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin-bottom:12px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.waiting-text{font-family:var(--font-mono);font-size:14px;color:var(--text);font-weight:600;letter-spacing:1px;}
