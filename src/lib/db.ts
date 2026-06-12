@@ -107,13 +107,6 @@ export const updateAllScores = async () => gas('updateAllScores');
 export const deleteParty = async (id: string) => gas('deleteParty', id);
 export const addParty = async (data: any) => gas('addParty', data);
 export const updateParty = async (id: string, updates: any) => gas('updateParty', id, updates);
-export const getContacts = async () => gas('getContacts');
-export const addContact = async (data: any) => gas('addContact', data);
-export const deleteContact = async (id: string) => gas('deleteContact', id);
-export const getTasks = async () => gas('getTasks');
-export const addTask = async (data: any) => gas('addTask', data);
-export const updateTask = async (id: string, updates: any) => gas('updateTask', id, updates);
-export const deleteTask = async (id: string) => gas('deleteTask', id);
 export const getLedger = async (mf: string|null) => gas('getLedger', mf);
 export const getDeliveryHistory = async (partyId: string|null, mf: string|null) => gas('getDeliveryHistory', partyId, mf);
 
@@ -125,3 +118,4 @@ export const updateLiftingTarget = async (mk: string, rowId: string, updates: an
 export const completeLiftingTarget = async (mk: string, rowId: string) => gas('completeLiftingTarget', mk, rowId);
 export const resetLiftingDeliveries = async (mk: string, rowId: string) => gas('resetLiftingDeliveries', mk, rowId);
 export const recordDelivery = async (mk: string, partyId: string, qty: number, notes: string) => gas('recordDelivery', mk, partyId, qty, notes);
+export const carryForwardLiftingTargets = async (mk: string) => gas('carryForwardLiftingTargets', mk);

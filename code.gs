@@ -24,13 +24,6 @@ function doPost(e) {
     else if (payload.func === 'deleteParty') result = deleteParty.apply(null, payload.args);
     else if (payload.func === 'addParty') result = addParty.apply(null, payload.args);
     else if (payload.func === 'updateParty') result = updateParty.apply(null, payload.args);
-    else if (payload.func === 'getContacts') result = getContacts.apply(null, payload.args);
-    else if (payload.func === 'addContact') result = addContact.apply(null, payload.args);
-    else if (payload.func === 'deleteContact') result = deleteContact.apply(null, payload.args);
-    else if (payload.func === 'getTasks') result = getTasks.apply(null, payload.args);
-    else if (payload.func === 'addTask') result = addTask.apply(null, payload.args);
-    else if (payload.func === 'updateTask') result = updateTask.apply(null, payload.args);
-    else if (payload.func === 'deleteTask') result = deleteTask.apply(null, payload.args);
     else if (payload.func === 'getLedger') result = getLedger.apply(null, payload.args);
     else if (payload.func === 'getDeliveryHistory') result = getDeliveryHistory.apply(null, payload.args);
     else if (payload.func === 'updateMonthRow') result = updateMonthRow.apply(null, payload.args);
@@ -40,6 +33,7 @@ function doPost(e) {
     else if (payload.func === 'completeLiftingTarget') result = completeLiftingTarget.apply(null, payload.args);
     else if (payload.func === 'resetLiftingDeliveries') result = resetLiftingDeliveries.apply(null, payload.args);
     else if (payload.func === 'recordDelivery') result = recordDelivery.apply(null, payload.args);
+    else if (payload.func === 'carryForwardLiftingTargets') result = carryForwardLiftingTargets.apply(null, payload.args);
     else throw new Error("Unknown function requested: " + payload.func);
 
     return ContentService.createTextOutput(JSON.stringify({success: true, data: result}))
@@ -321,13 +315,62 @@ function populateLiftingSheet(sh, monthKey){
   const parties = getAllPartiesRaw();
   if(!parties.length) return;
   const now = new Date();
+
+  // Look for previous month's lifting sheet to carry forward targets
+  var prevLiftingMap = {};
+  try {
+    var parts = monthKey.split('-');
+    var yr = parseInt(parts[0], 10);
+    var mo = parseInt(parts[1], 10);
+    var prevMonthDate = new Date(yr, mo - 2, 1);
+    var prevKey = mk(prevMonthDate);
+    var prevSh = SS().getSheetByName(CFG.LIFTING_PREFIX + prevKey);
+    
+    if (prevSh && prevSh.getLastRow() >= 2) {
+      var pd = prevSh.getDataRange().getValues();
+      var ph = pd[0];
+      var pidI = ph.indexOf('Party ID');
+      var targetI = ph.indexOf('Target Quantity (kg)');
+      var freqI = ph.indexOf('Delivery Frequency');
+      var dayI = ph.indexOf('Preferred Day');
+      
+      if (pidI !== -1 && targetI !== -1 && freqI !== -1 && dayI !== -1) {
+        for (var i = 1; i < pd.length; i++) {
+          var pId = String(pd[i][pidI]).trim();
+          if (pId) {
+            prevLiftingMap[pId] = {
+              target: toNum(pd[i][targetI]),
+              frequency: pd[i][freqI] || 'Weekly',
+              day: pd[i][dayI] || 'Monday'
+            };
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('populateLiftingSheet auto-carry forward error:', e.message);
+  }
+
   const rows = parties.map(p => {
     const partyId = p['Party ID'];
     const slNo = String(p['SL NO']);
-    const demoTarget = CFG.DEMO_LIFTING_TARGETS[slNo];
-    const targetQty = demoTarget ? demoTarget.target : 0;
-    const freq = demoTarget ? demoTarget.frequency : 'Weekly';
-    const day = demoTarget ? demoTarget.day : 'Monday';
+    
+    // Check if we have previous month's target data
+    let targetQty = 0;
+    let freq = 'Weekly';
+    let day = 'Monday';
+    
+    if (prevLiftingMap[partyId] !== undefined) {
+      targetQty = prevLiftingMap[partyId].target;
+      freq = prevLiftingMap[partyId].frequency;
+      day = prevLiftingMap[partyId].day;
+    } else {
+      const demoTarget = CFG.DEMO_LIFTING_TARGETS[slNo];
+      targetQty = demoTarget ? demoTarget.target : 0;
+      freq = demoTarget ? demoTarget.frequency : 'Weekly';
+      day = demoTarget ? demoTarget.day : 'Monday';
+    }
+
     return [
       uid('LR'), partyId, p['Account Name'], p['Contact No'], monthKey,
       targetQty, 0, targetQty, 0, freq, day,
@@ -336,6 +379,97 @@ function populateLiftingSheet(sh, monthKey){
   });
   if(rows.length) {
     sh.getRange(2, 1, rows.length, CFG.COLS.LIFTING.length).setValues(rows);
+  }
+}
+
+function carryForwardLiftingTargets(monthKey) {
+  assertRole([CFG.ROLES.ADMIN, CFG.ROLES.COLLECTOR]);
+  try {
+    const sh = SS().getSheetByName(CFG.LIFTING_PREFIX + monthKey);
+    if (!sh) throw new Error("Sheet not found for " + monthKey);
+    
+    const parts = monthKey.split('-');
+    const yr = parseInt(parts[0], 10);
+    const mo = parseInt(parts[1], 10);
+    const prevMonthDate = new Date(yr, mo - 2, 1);
+    const prevKey = mk(prevMonthDate);
+    const prevSh = SS().getSheetByName(CFG.LIFTING_PREFIX + prevKey);
+    
+    if (!prevSh || prevSh.getLastRow() < 2) {
+      throw new Error("No lifting data found in previous month (" + prevKey + ") to carry forward.");
+    }
+    
+    // Read previous month's targets
+    const pd = prevSh.getDataRange().getValues();
+    const ph = pd[0];
+    const pidI = ph.indexOf('Party ID');
+    const targetI = ph.indexOf('Target Quantity (kg)');
+    const freqI = ph.indexOf('Delivery Frequency');
+    const dayI = ph.indexOf('Preferred Day');
+    
+    if (pidI === -1 || targetI === -1 || freqI === -1 || dayI === -1) {
+      throw new Error("Previous month's columns are unsupported.");
+    }
+    
+    const prevMap = {};
+    for (let i = 1; i < pd.length; i++) {
+      const pId = String(pd[i][pidI]).trim();
+      if (pId) {
+        prevMap[pId] = {
+          target: toNum(pd[i][targetI]),
+          frequency: pd[i][freqI] || 'Weekly',
+          day: pd[i][dayI] || 'Monday'
+        };
+      }
+    }
+    
+    // Read current month's columns
+    const cd = sh.getDataRange().getValues();
+    const ch = cd[0];
+    const c_pidI = ch.indexOf('Party ID');
+    const c_targetI = ch.indexOf('Target Quantity (kg)');
+    const c_remainI = ch.indexOf('Remaining (kg)');
+    const c_freqI = ch.indexOf('Delivery Frequency');
+    const c_dayI = ch.indexOf('Preferred Day');
+    const c_statusI = ch.indexOf('Status');
+    const c_updI = ch.indexOf('Updated At');
+    
+    if (c_pidI === -1 || c_targetI === -1 || c_remainI === -1 || c_freqI === -1 || c_dayI === -1 || c_statusI === -1) {
+      throw new Error("Lifting columns are missing in the sheet.");
+    }
+    
+    let updateCount = 0;
+    const nowStr = fmtDate(new Date());
+    
+    for (let i = 1; i < cd.length; i++) {
+      const pId = String(cd[i][c_pidI]).trim();
+      const prevData = prevMap[pId];
+      if (prevData && prevData.target > 0) {
+        // Carry forward if current target is 0 or "NO TARGET"
+        const currentTarget = toNum(cd[i][c_targetI]);
+        const currentStatus = String(cd[i][c_statusI]);
+        if (currentTarget === 0 || currentStatus === 'NO TARGET') {
+          sh.getRange(i + 1, c_targetI + 1).setValue(prevData.target);
+          sh.getRange(i + 1, c_remainI + 1).setValue(prevData.target);
+          sh.getRange(i + 1, c_freqI + 1).setValue(prevData.frequency);
+          sh.getRange(i + 1, c_dayI + 1).setValue(prevData.day);
+          sh.getRange(i + 1, c_statusI + 1).setValue('NOT STARTED');
+          if (c_updI !== -1) {
+            sh.getRange(i + 1, c_updI + 1).setValue(nowStr);
+          }
+          updateCount++;
+        }
+      }
+    }
+    
+    if (updateCount > 0) {
+      SpreadsheetApp.flush();
+    }
+    return { success: true, updated: updateCount };
+    
+  } catch (e) {
+    console.error('carryForwardLiftingTargets error:', e.message);
+    throw new Error(e.message);
   }
 }
 
@@ -348,8 +482,26 @@ function initDatabase(){
   ensureSheet(CFG.SH.USERS,     CFG.COLS.USERS,        '#1e293b');
   ensureSheet(CFG.SH.SETTINGS,  CFG.COLS.SETTINGS,     '#1e293b');
   ensureSheet(CFG.SH.PARTIES,   CFG.COLS.PARTIES,      '#3730a3');
-  ensureSheet(CFG.SH.CONTACTS,  CFG.COLS.CONTACTS,     '#0e7490');
-  ensureSheet(CFG.SH.TASKS,     CFG.COLS.TASKS,        '#6d28d9');
+
+  // Safely delete Contacts and Tasks sheets as requested to remove them completely
+  try {
+    const shContacts = SS().getSheetByName(CFG.SH.CONTACTS);
+    if (shContacts) {
+      SS().deleteSheet(shContacts);
+    }
+  } catch (e) {
+    console.warn('Could not delete Contacts sheet:', e.message);
+  }
+
+  try {
+    const shTasks = SS().getSheetByName(CFG.SH.TASKS);
+    if (shTasks) {
+      SS().deleteSheet(shTasks);
+    }
+  } catch (e) {
+    console.warn('Could not delete Tasks sheet:', e.message);
+  }
+
   ensureSheet(CFG.SH.INTERACTIONS,CFG.COLS.INTERACTIONS,'#b45309');
   ensureSheet(CFG.SH.LEDGER,    CFG.COLS.LEDGER,       '#065f46');
   ensureSheet(CFG.SH.LIFTING_HISTORY,CFG.COLS.LIFTING_HISTORY,'#9a3412'); 
@@ -958,74 +1110,6 @@ function getLedger(monthFilter){
     return rows.filter(r => String(r['Month']).trim() === String(filterFormatted).trim());
   }
   return rows;
-}
-
-function getContacts(partyId){
-  const sh=SS().getSheetByName(CFG.SH.CONTACTS);
-  if(!sh||sh.getLastRow()<2) return[];
-  const d=sh.getDataRange().getValues(); const h=d[0];
-  const all=d.slice(1).map(r=>{ const o={}; h.forEach((k,i)=>o[k]=r[i]); return o; });
-  return partyId?all.filter(c=>String(c['Party ID'])===String(partyId)):all;
-}
-function addContact(data){
-  const sh=ensureSheet(CFG.SH.CONTACTS, CFG.COLS.CONTACTS,'#0e7490');
-  const id=uid('C');
-  sh.appendRow([id,data.partyId||'',data.name||'',data.phone||'',data.email||'',data.role||'',new Date(),new Date()]);
-  return id;
-}
-function updateContact(contactId,updates){
-  const sh=SS().getSheetByName(CFG.SH.CONTACTS);
-  const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap1(h);
-  const fm={name:'Name',phone:'Phone',email:'Email',role:'Role'};
-  for(let i=1;i<d.length;i++){
-    if(String(d[i][0])===String(contactId)){
-      Object.entries(updates).forEach(([k,v])=>{ if(fm[k]&&c[fm[k]]) sh.getRange(i+1,c[fm[k]]).setValue(v); });
-      sh.getRange(i+1,c['Updated At']).setValue(new Date());
-      return true;
-    }
-  }
-  throw new Error('Contact not found');
-}
-function deleteContact(id){
-  const sh=SS().getSheetByName(CFG.SH.CONTACTS);
-  const d=sh.getDataRange().getValues();
-  for(let i=1;i<d.length;i++){ if(String(d[i][0])===String(id)){ sh.deleteRow(i+1); return true; } }
-  throw new Error('Contact not found');
-}
-
-function getTasks(partyId){
-  const sh=SS().getSheetByName(CFG.SH.TASKS);
-  if(!sh||sh.getLastRow()<2) return[];
-  const d=sh.getDataRange().getValues(); const h=d[0];
-  const all=d.slice(1).map(r=>{ const o={}; h.forEach((k,i)=>o[k]=r[i]); return o; });
-  return partyId?all.filter(t=>String(t['Party ID'])===String(partyId)):all;
-}
-function addTask(data){
-  const sh=ensureSheet(CFG.SH.TASKS, CFG.COLS.TASKS,'#6d28d9');
-  const id=uid('T');
-  sh.appendRow([id,data.partyId||'',data.title||'',data.description||'',
-    data.targetDate||data.dueDate||'',data.assignedTo||'',data.status||'Pending',new Date(),new Date()]);
-  return id;
-}
-function updateTask(taskId,updates){
-  const sh=SS().getSheetByName(CFG.SH.TASKS);
-  const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap1(h);
-  for(let i=1;i<d.length;i++){
-    if(String(d[i][0])===String(taskId)){
-      const fm={title:'Title',description:'Description',targetDate:'Target Date',
-                dueDate:'Target Date',assignedTo:'Assigned To',status:'Status',Status:'Status'};
-      Object.entries(updates).forEach(([k,v])=>{ if(fm[k]&&c[fm[k]]) sh.getRange(i+1,c[fm[k]]).setValue(v); });
-      sh.getRange(i+1,c['Updated At']).setValue(new Date());
-      return true;
-    }
-  }
-  throw new Error('Task not found');
-}
-function deleteTask(id){
-  const sh=SS().getSheetByName(CFG.SH.TASKS);
-  const d=sh.getDataRange().getValues();
-  for(let i=1;i<d.length;i++){ if(String(d[i][0])===String(id)){ sh.deleteRow(i+1); return true; } }
-  throw new Error('Task not found');
 }
 
 function listLiftingMonths(){

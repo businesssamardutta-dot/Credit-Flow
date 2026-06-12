@@ -66,6 +66,25 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
 
   const reload = () => loadData(sel);
 
+  const handleCarryForward = async () => {
+    if (!sel) return;
+    if (!window.confirm(`Carry forward lifting targets from the previous month to ${mkLabel(sel)}? This will apply targets, days, and frequencies from the last month for any accounts currently set with 'NO TARGET'.`)) return;
+    setBusy(true);
+    try {
+      const res = await api.carryForwardLiftingTargets(sel);
+      if (res && res.updated > 0) {
+        toast(`Successfully carried forward targets for ${res.updated} account(s)!`, 'success');
+        reload();
+      } else {
+        toast(`No unassigned accounts found to carry forward, or previous month targets matched current targets.`, 'info');
+      }
+    } catch (e: any) {
+      toast('Error carrying forward targets: ' + e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleComplete = async (row: any) => {
     if (!window.confirm(`Complete target for ${row['Account Name']}? This will set delivered = target.`)) return;
     setBusy(true);
@@ -119,7 +138,15 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
     <div>
       <div className="sec-hdr">
         <h2>Goods Lifting Tracker</h2>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button 
+            className="btn sm" 
+            disabled={busy} 
+            onClick={handleCarryForward} 
+            style={{ borderColor: 'var(--accent)', color: 'var(--accent)', marginRight: 6, display: 'flex', alignItems: 'center', gap: '4px' }}
+          >
+            📥 Carry Forward Targets
+          </button>
           <input className="search-input" value={q} onChange={e => setQ(e.target.value)} placeholder="Search party…" style={{ width: 170 }} />
           <button className={`btn sm ${view === 'cards' ? 'primary' : ''}`} onClick={() => setView('cards')}>⊞ Cards</button>
           <button className={`btn sm ${view === 'table' ? 'primary' : ''}`} onClick={() => setView('table')}>≡ Table</button>
@@ -133,6 +160,20 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
           </div>
         ))}
       </div>
+
+      {kpis && kpis.withTarget === 0 && kpis.totalParties > 0 && !busy && (
+        <div className="card" style={{ padding: '12px 16px', background: 'rgba(124, 45, 18, 0.05)', borderColor: 'rgba(124, 45, 18, 0.2)', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '18px' }}>💡</span>
+            <span style={{ fontSize: '13px' }}>
+              No targets are configured for <strong>{mkLabel(sel)}</strong> yet. Tap <strong>Carry Forward Targets</strong> to automatically copy previous targets.
+            </span>
+          </div>
+          <button className="btn sm primary" onClick={handleCarryForward} disabled={busy}>
+            Carry Forward Now
+          </button>
+        </div>
+      )}
 
       {kpis && !busy && (
         <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(145px,1fr))', marginBottom: 18 }}>

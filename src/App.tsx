@@ -5,7 +5,7 @@ import { fmt, fmtRs, mkLabel } from './lib/utils';
 import { DashboardPage } from './components/DashboardPage';
 import { MonthlyPage } from './components/MonthlyPage';
 import { LiftingLedgerPage, LiftingPage, LiftingSchedulePage } from './components/LiftingPage';
-import { PartiesPage, ContactsPage, TasksPage } from './components/PartiesPage';
+import { PartiesPage } from './components/PartiesPage';
 import { LedgerPage } from './components/LedgerPage';
 import { SettingsPage } from './components/SettingsPage';
 
@@ -18,8 +18,6 @@ const nav = [
   { id: 'lifting-schedule', ico: '🚚', label: 'Lifting Schedule' },
   { id: 'lifting-ledger', ico: '📋', label: 'Lifting Ledger' },
   { id: 'parties', ico: '🏢', label: 'Parties' },
-  { id: 'contacts', ico: '👤', label: 'Contacts' },
-  { id: 'tasks', ico: '✓', label: 'Tasks' },
   { id: 'ledger', ico: '📒', label: 'Ledger' },
   { id: 'settings', ico: '⚙', label: 'Settings' },
 ];
@@ -255,8 +253,6 @@ export default function App() {
               {tab === 'lifting-schedule' && <LiftingSchedulePage parties={parties} toast={toast} currentMonth={summary?.currentMonth} />}
               {tab === 'lifting-ledger' && <LiftingLedgerPage parties={parties} toast={toast} />}
               {tab === 'parties' && <PartiesPage parties={parties} toast={toast} refresh={refresh} />}
-              {tab === 'contacts' && <ContactsPage parties={parties} toast={toast} />}
-              {tab === 'tasks' && <TasksPage parties={parties} toast={toast} />}
               {tab === 'ledger' && <LedgerPage months={summary?.allMonths || []} parties={parties} toast={toast} />}
               {tab === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} saveTheme={saveTheme} toast={toast} refresh={refresh} />}
             </>
