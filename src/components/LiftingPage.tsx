@@ -71,12 +71,82 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
     if (!window.confirm(`Carry forward lifting targets from the previous month to ${mkLabel(sel)}? This will apply targets, days, and frequencies from the last month for any accounts currently set with 'NO TARGET'.`)) return;
     setBusy(true);
     try {
-      const res = await api.carryForwardLiftingTargets(sel);
-      if (res && res.updated > 0) {
-        toast(`Successfully carried forward targets for ${res.updated} account(s)!`, 'success');
-        reload();
-      } else {
-        toast(`No unassigned accounts found to carry forward, or previous month targets matched current targets.`, 'info');
+      try {
+        const res = await api.carryForwardLiftingTargets(sel);
+        if (res && res.updated > 0) {
+          toast(`Successfully carried forward targets for ${res.updated} account(s)!`, 'success');
+          reload();
+        } else {
+          toast(`No unassigned accounts found to carry forward, or previous month targets matched current targets.`, 'info');
+        }
+      } catch (srvError: any) {
+        console.warn('Backend carryForwardLiftingTargets failed or is not updated yet. Running robust client-side fallback...', srvError.message);
+        
+        // 1. Calculate previous month key
+        const parts = sel.split('-');
+        const yr = parseInt(parts[0], 10);
+        const mo = parseInt(parts[1], 10);
+        const prevDate = new Date(yr, mo - 2, 1);
+        const prevMonthKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+        
+        // 2. Fetch previous month data and current month data
+        const [prevData, curData] = await Promise.all([
+          api.getLiftingData(prevMonthKey).catch(() => []),
+          api.getLiftingData(sel)
+        ]);
+        
+        if (!prevData || prevData.length === 0) {
+          throw new Error(`Could not find previous month's (${prevMonthKey}) targets or previous sheet has no data.`);
+        }
+        
+        // Create map of previous month's target by Party ID
+        const prevMap: Record<string, any> = {};
+        prevData.forEach((r: any) => {
+          const pId = String(r['Party ID'] || '').trim();
+          if (pId) {
+            prevMap[pId] = {
+              target: Number(r['Target Quantity (kg)']) || 0,
+              frequency: r['Delivery Frequency'] || 'Weekly',
+              day: r['Preferred Day'] || 'Monday'
+            };
+          }
+        });
+        
+        // Filter current rows that have status === 'NO TARGET' or target === 0
+        const unassigned = curData.filter((r: any) => {
+          const currentTarget = Number(r['Target Quantity (kg)']) || 0;
+          const currentStatus = String(r['Status'] || '');
+          return currentTarget === 0 || currentStatus === 'NO TARGET';
+        });
+        
+        if (unassigned.length === 0) {
+          toast(`No unassigned accounts ('NO TARGET') found to carry forward in the current month.`, 'info');
+          setBusy(false);
+          return;
+        }
+        
+        let updateCount = 0;
+        // Loop through and update unassigned accounts that have historical target in prevMap
+        for (const r of unassigned) {
+          const pId = String(r['Party ID'] || '').trim();
+          const prevRow = prevMap[pId];
+          if (prevRow && prevRow.target > 0) {
+            const rowId = r['Row ID'];
+            await api.updateLiftingTarget(sel, rowId, {
+              targetQuantity: prevRow.target,
+              deliveryFrequency: prevRow.frequency,
+              preferredDay: prevRow.day
+            });
+            updateCount++;
+          }
+        }
+        
+        if (updateCount > 0) {
+          toast(`Successfully carried forward targets for ${updateCount} account(s)!`, 'success');
+          reload();
+        } else {
+          toast(`No historical targets found in the previous month for the currently unassigned accounts.`, 'info');
+        }
       }
     } catch (e: any) {
       toast('Error carrying forward targets: ' + e.message, 'error');
