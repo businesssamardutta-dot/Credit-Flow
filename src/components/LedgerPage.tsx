@@ -51,6 +51,7 @@ export function LedgerPage({ months, toast }: any) {
   const [parties, setParties] = useState<any[]>([]);
   const [rows, setRows] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
+  const [showBreakdownModal, setShowBreakdownModal] = useState(false);
 
   useEffect(() => {
     api.getParties().then(setParties).catch(console.error);
@@ -67,6 +68,17 @@ export function LedgerPage({ months, toast }: any) {
   useEffect(() => {
     fetchLedger();
   }, [selectedMonth]);
+
+  const modalRows = useMemo(() => {
+    if (!selectedParty) return [];
+    let prs = rows.filter((r: any) => 
+      (r['Account Name'] || '').toLowerCase().includes(selectedParty.toLowerCase())
+    );
+    if (selectedMonth) {
+      prs = prs.filter((r: any) => r['Month'] === selectedMonth);
+    }
+    return prs.sort((a: any, b: any) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
+  }, [rows, selectedParty, selectedMonth]);
 
   const filteredRows = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -259,23 +271,180 @@ export function LedgerPage({ months, toast }: any) {
               </h3>
             </div>
           </div>
-          {trendData && trendData.length > 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-              <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Current Balance</span>
-                <span className="mono" style={{ fontWeight: 700, fontSize: '15px', color: 'var(--accent)' }}>
-                  {filteredRows.length > 0 && (filteredRows[0]['Account Name'] || '').toLowerCase().includes(selectedParty.toLowerCase()) 
-                    ? fmtRs(filteredRows[0]['Closing Balance']) 
-                    : '₹0.00'}
-                </span>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+            {trendData && trendData.length > 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Current Balance</span>
+                  <span className="mono" style={{ fontWeight: 700, fontSize: '15px', color: 'var(--accent)' }}>
+                    {filteredRows.length > 0 && (filteredRows[0]['Account Name'] || '').toLowerCase().includes(selectedParty.toLowerCase()) 
+                      ? fmtRs(filteredRows[0]['Closing Balance']) 
+                      : '₹0.00'}
+                  </span>
+                </div>
+                
+                {/* Sparkline chart next to selected party name displaying last 5 transactions */}
+                <Sparkline data={trendData} />
+              </div>
+            ) : (
+              <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>No balance history found</span>
+            )}
+            
+            <button 
+              className="btn sm primary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => setShowBreakdownModal(true)}
+            >
+              📊 Balance History Breakdown
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Balance History Arithmetic Breakdown Modal */}
+      {showBreakdownModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}>
+          <div className="card" style={{
+            width: '100%',
+            maxWidth: '850px',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+            padding: '24px',
+            background: 'var(--surface)',
+            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)',
+            border: '1.5px solid var(--border)',
+            borderRadius: '12px',
+            overflow: 'hidden'
+          }}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid var(--border)', paddingBottom: '14px' }}>
+              <div>
+                <span style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ledger Arithmetic Review</span>
+                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 700, color: 'var(--text)', margin: '2px 0 0 0' }}>
+                  Balance History: {selectedParty}
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+                  Breakdown of mathematical operations for {selectedMonth ? mkLabel(selectedMonth) : 'All Months'}
+                </p>
+              </div>
+              <button 
+                className="btn" 
+                style={{ minWidth: '36px', height: '36px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', color: 'var(--muted)' }}
+                onClick={() => setShowBreakdownModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Arithmetic Overview Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
+              <div style={{ padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                <span style={{ fontSize: '9px', color: 'var(--muted)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Period Starting Balance</span>
+                <div className="mono" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text)', marginTop: '4px' }}>
+                  {fmtRs(modalRows[0]?.['Opening Balance'] || 0)}
+                </div>
               </div>
               
-              {/* Sparkline chart next to selected party name displaying last 5 transactions */}
-              <Sparkline data={trendData} />
+              <div style={{ padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                <span style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', color: 'var(--red)' }}>Total Debits (+)</span>
+                <div className="mono" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--red)', marginTop: '4px' }}>
+                  {fmtRs(modalRows.reduce((sum, r) => sum + (Number(r['Debit (New Credit)']) || 0), 0))}
+                </div>
+              </div>
+
+              <div style={{ padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                <span style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', color: 'var(--green)' }}>Total Credits (-)</span>
+                <div className="mono" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--green)', marginTop: '4px' }}>
+                  {fmtRs(modalRows.reduce((sum, r) => sum + (Number(r['Credit (Payment)']) || 0), 0))}
+                </div>
+              </div>
+
+              <div style={{ padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                <span style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', color: 'var(--accent)' }}>Ending/Closing Balance</span>
+                <div className="mono" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--accent)', marginTop: '4px' }}>
+                  {fmtRs(modalRows[modalRows.length - 1]?.['Closing Balance'] || 0)}
+                </div>
+              </div>
             </div>
-          ) : (
-            <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>No balance history found</span>
-          )}
+
+            {/* Step-by-Step Ledger List */}
+            <div style={{ flex: 1, overflowY: 'auto', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface2)' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)', borderBottom: '1.5px solid var(--border)' }}>
+                  <tr>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', color: 'var(--muted)' }}>Txn Date</th>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', color: 'var(--muted)' }}>Description / Notes</th>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', color: 'var(--muted)', textAlign: 'center' }}>Arithmetic Breakdown & Balance Shift</th>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', color: 'var(--muted)', textAlign: 'right' }}>Closing Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {modalRows.map((r, i) => {
+                    const op = Number(r['Opening Balance']) || 0;
+                    const db = Number(r['Debit (New Credit)']) || 0;
+                    const cr = Number(r['Credit (Payment)']) || 0;
+                    const cl = Number(r['Closing Balance']) || 0;
+                    
+                    return (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                        <td className="mono" style={{ padding: '12px 16px', fontSize: '11px' }}>{r['Timestamp']}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px' }}>
+                          <div style={{ fontWeight: 500, color: 'var(--text)' }}>
+                            {db > 0 ? '📈 New Credit Invoice' : '💳 Payment Recorded'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r['Notes']}>
+                            {r['Notes']}
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'center' }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'var(--surface2)', padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                            <span className="mono">{fmtRs(op)}</span>
+                            {db > 0 && <span style={{ color: 'var(--red)', fontWeight: 'bold' }}>+ {fmtRs(db)}</span>}
+                            {cr > 0 && <span style={{ color: 'var(--green)', fontWeight: 'bold' }}>- {fmtRs(cr)}</span>}
+                            <span>=</span>
+                            <span className="mono" style={{ fontWeight: 600 }}>{fmtRs(cl)}</span>
+                          </div>
+                        </td>
+                        <td className="mono" style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, fontSize: '12px' }}>
+                          {fmtRs(cl)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {modalRows.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ padding: '32px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
+                        No ledger transactions found for this party in the selected period.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1.5px solid var(--border)', paddingTop: '14px' }}>
+              <button className="btn primary" onClick={() => setShowBreakdownModal(false)} style={{ minWidth: '100px' }}>
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

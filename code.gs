@@ -228,19 +228,32 @@ function carryForward(sh,monthKey){
     const prevMonthDate = new Date(yr, mo - 2, 1); 
     const prevSh=SS().getSheetByName(CFG.MONTHLY_PREFIX+mk(prevMonthDate));
     
-    if(!prevSh||prevSh.getLastRow()<2) return;
+    // Load initial opening balances of all parties from Parties sheet as fallback
+    const initialOp = {};
+    try {
+      const parties = getAllPartiesRaw();
+      parties.forEach(p => {
+        const pId = String(p['Party ID'] || '').trim();
+        if (pId) {
+          initialOp[pId] = toNum(p['Opening Balance']);
+        }
+      });
+    } catch(e) {
+      console.log("Error loading initial party opening balances:", e);
+    }
     
-    const pd=prevSh.getDataRange().getValues(); 
-    const ph=pd[0];
-    const pidI=ph.indexOf('Party ID'); 
-    const balI=ph.indexOf('Balance');
-    
-    if(pidI === -1 || balI === -1) return;
-
     const bm={};
-    for(let i=1;i<pd.length;i++){
-      const pId = String(pd[i][pidI]).trim();
-      if(pId) bm[pId] = toNum(pd[i][balI]);
+    if(prevSh && prevSh.getLastRow() >= 2) {
+      const pd=prevSh.getDataRange().getValues(); 
+      const ph=pd[0];
+      const pidI=ph.indexOf('Party ID'); 
+      const balI=ph.indexOf('Balance');
+      if(pidI !== -1 && balI !== -1) {
+        for(let i=1;i<pd.length;i++){
+          const pId = String(pd[i][pidI]).trim();
+          if(pId) bm[pId] = toNum(pd[i][balI]);
+        }
+      }
     }
 
     const cd=sh.getDataRange().getValues(); 
@@ -252,7 +265,7 @@ function carryForward(sh,monthKey){
     let updated = false;
     for(let i=1;i<cd.length;i++){
       const currentPartyId = String(cd[i][targetPidI]).trim();
-      const carry = bm[currentPartyId] !== undefined ? bm[currentPartyId] : 0;
+      const carry = bm[currentPartyId] !== undefined ? bm[currentPartyId] : (initialOp[currentPartyId] || 0);
       
       const oldOpening = toNum(cd[i][ch.indexOf('Opening Balance')]);
       const oldNewCredit = toNum(cd[i][ch.indexOf('New Credit')]);
@@ -266,11 +279,13 @@ function carryForward(sh,monthKey){
         sh.getRange(i+1, cC['Total Debt']).setValue(newTotalDebt);
         sh.getRange(i+1, cC['Balance']).setValue(newBalance);
         
-        if (newBalance <= 0) {
+        if (newBalance < 0) {
+          sh.getRange(i+1, cC['Status']).setValue('ADVANCE');
+        } else if (newBalance === 0) {
           sh.getRange(i+1, cC['Status']).setValue('PAID');
         } else {
           const statusColVal = cd[i][ch.indexOf('Status')];
-          if (statusColVal === 'PAID') {
+          if (statusColVal === 'PAID' || statusColVal === 'ADVANCE') {
             sh.getRange(i+1, cC['Status']).setValue(cd[i][ch.indexOf('Credit Days')] === 'ADVANCE' ? 'ADVANCE' : 'ACTIVE');
           }
         }
@@ -1060,7 +1075,81 @@ function recordPayment(partyId,amount,method,reference,notes,monthKey){
   throw new Error('Party not found in month sheet');
 }
 
+function addAuditLog(e) {
+  try {
+    const sh = ensureSheet('Audit Logs', ['Timestamp', 'Type', 'Party ID', 'Account Name', 'User', 'Field', 'Old Value', 'New Value', 'Details'], '#7f1d1d');
+    const now = new Date();
+    const user = Session.getActiveUser().getEmail() || 'System';
+    sh.appendRow([
+      now,
+      e.type || 'VALIDATION',
+      e.partyId || '',
+      e.accountName || '',
+      user,
+      e.field || '',
+      String(e.oldVal !== undefined ? e.oldVal : ''),
+      String(e.newVal !== undefined ? e.newVal : ''),
+      e.details || ''
+    ]);
+  } catch(err) {
+    console.log("Error writing audit log:", err);
+  }
+}
+
+function onEdit(e) {
+  if (!e) return;
+  try {
+    const range = e.range;
+    const sheet = range.getSheet();
+    const sheetName = sheet.getName();
+    
+    if (sheetName === CFG.SH.LEDGER) {
+      const row = range.getRow();
+      const col = range.getColumn();
+      
+      // 'Opening Balance' is 5th column.
+      if (row > 1 && col === 5) {
+        const oldVal = e.oldValue;
+        const newVal = range.getValue();
+        
+        const partyId = sheet.getRange(row, 2).getValue();
+        const accountName = sheet.getRange(row, 3).getValue();
+        
+        addAuditLog({
+          type: 'LEDGER_SHEET_EDIT',
+          partyId: partyId,
+          accountName: accountName,
+          field: 'Opening Balance',
+          oldVal: oldVal,
+          newVal: newVal,
+          details: `User manually edited Opening Balance cell in 'Ledger' sheet at row ${row}, col ${col} from ₹${oldVal} to ₹${newVal}.`
+        });
+      }
+    }
+  } catch(err) {
+    console.log("Error in onEdit trigger:", err);
+  }
+}
+
 function addLedgerEntry(e){
+  const expectedOpening = getLastClosingBalance(e.partyId);
+  const passedOpening = toNum(e.openingBalance);
+  
+  if (Math.abs(passedOpening - expectedOpening) > 0.01) {
+    addAuditLog({
+      type: 'LEDGER_OVERRIDE_WARNING',
+      partyId: e.partyId,
+      accountName: e.accountName,
+      field: 'Opening Balance',
+      oldVal: expectedOpening,
+      newVal: passedOpening,
+      details: `Manual opening balance override detected! Attempted override from ₹${expectedOpening} to ₹${passedOpening} for transaction: ${e.notes || ''}. Auto-corrected to prevent data corruption.`
+    });
+    
+    e.openingBalance = expectedOpening;
+    e.closingBalance = expectedOpening + (e.debit || 0) - (e.credit || 0);
+  }
+
   const sh=ensureSheet(CFG.SH.LEDGER,CFG.COLS.LEDGER,'#065f46');
   const data = sh.getDataRange().getValues();
   const h = data[0];
