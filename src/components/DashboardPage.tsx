@@ -5,6 +5,63 @@ import { statusBadge } from '../App';
 import * as api from '../lib/db';
 
 export function DashboardPage({ summary, parties, toast, refresh, setTab }: any) {
+  const [showCustomizer, setShowCustomizer] = useState(false);
+  const [selectedKpis, setSelectedKpis] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('creditflow_selected_kpis');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length >= 4 && parsed.length <= 6) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return ['outstanding', 'credit', 'collected', 'overdue', 'dueSoon', 'avgScore'];
+  });
+
+  const allKpiOptions = useMemo(() => {
+    const totalPendingCredits = (parties || []).reduce((acc: number, p: any) => acc + (p.balance > 0 ? p.balance : 0), 0);
+    const sumOfLimits = (parties || []).reduce((acc: number, p: any) => acc + (Number(p.creditLimit) || 0), 0);
+    return [
+      { id: 'outstanding', label: 'Outstanding Balance', val: fmtRs(summary.totalOutstanding), sub: 'Current month', col: '#1a6fbb' },
+      { id: 'credit', label: 'Total Pending Credits', val: fmtRs(totalPendingCredits), sub: 'Accumulated active balance', col: '#4f46e5' },
+      { id: 'newCredit', label: 'New Credit Sales', val: fmtRs(summary.totalCredit), sub: 'This month', col: '#7c3aed' },
+      { id: 'collected', label: 'Monthly Collection', val: fmtRs(summary.totalCollected), sub: 'This month', col: '#059669' },
+      { id: 'overdue', label: 'Total Overdue', val: summary.overdueCount + ' Accounts', sub: 'Action required', col: '#dc2626' },
+      { id: 'dueSoon', label: 'Due Soon', val: summary.dueSoonCount + ' Accounts', sub: 'Within 2 days', col: '#d97706' },
+      { id: 'paid', label: 'Paid Accounts', val: summary.paidCount + ' Accounts', sub: 'Fully clear this month', col: '#059669' },
+      { id: 'active', label: 'Active Accounts', val: summary.activeCount + ' Accounts', sub: 'This month', col: '#2563eb' },
+      { id: 'avgScore', label: 'Avg Credit Score', val: summary.avgScore, sub: 'All parties', col: '#ea580c' },
+      { id: 'sumOfLimits', label: 'Total Credit Limits', val: fmtRs(sumOfLimits), sub: 'Max exposure', col: '#0d9488' }
+    ];
+  }, [summary, parties]);
+
+  const kpis = useMemo(() => {
+    const map = new Map(allKpiOptions.map(opt => [opt.id, opt]));
+    return selectedKpis.map(id => map.get(id)).filter(Boolean);
+  }, [selectedKpis, allKpiOptions]);
+
+  const handleToggleKpi = (id: string) => {
+    setSelectedKpis(prev => {
+      let next;
+      if (prev.includes(id)) {
+        if (prev.length <= 4) {
+          toast('You must display at least 4 metrics on the dashboard.', 'error');
+          return prev;
+        }
+        next = prev.filter(x => x !== id);
+      } else {
+        if (prev.length >= 6) {
+          toast('You can select a maximum of 6 metrics on the dashboard.', 'error');
+          return prev;
+        }
+        next = [...prev, id];
+      }
+      localStorage.setItem('creditflow_selected_kpis', JSON.stringify(next));
+      return next;
+    });
+  };
+
   const agingRef = useRef<HTMLCanvasElement>(null);
   const scoreRef = useRef<HTMLCanvasElement>(null);
   const acRef = useRef<Chart | null>(null);
@@ -168,24 +225,57 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
     }, { totalDebt: 0, totalPaid: 0, totalBalance: 0 });
   });
 
-  const kpis = [
-    { label: 'Outstanding', val: fmtRs(summary.totalOutstanding), sub: 'Current month', col: '#1a6fbb' },
-    { label: 'New Credit', val: fmtRs(summary.totalCredit), sub: 'This month', col: '#7c3aed' },
-    { label: 'Collected', val: fmtRs(summary.totalCollected), sub: 'This month', col: '#059669' },
-    { label: 'Overdue', val: summary.overdueCount, sub: 'Accounts', col: '#dc2626' },
-    { label: 'Due Soon', val: summary.dueSoonCount, sub: 'Within 2 days', col: '#d97706' },
-    { label: 'Paid', val: summary.paidCount, sub: 'This month', col: '#059669' },
-    { label: 'Active', val: summary.activeCount, sub: 'Accounts', col: '#2563eb' },
-    { label: 'Avg Score', val: summary.avgScore, sub: 'All parties', col: '#ea580c' },
-  ];
-
   const exceededParties = useMemo(() => {
     return (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
   }, [parties]);
 
   return (
     <div>
-      <div className="sec-hdr"><h2>Dashboard</h2><span className="mono" style={{ color: 'var(--muted)', fontSize: 12 }}>Month: {summary.currentMonth}</span></div>
+      <div className="sec-hdr">
+        <h2>Dashboard</h2>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button className="btn sm" onClick={() => setShowCustomizer(!showCustomizer)} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '5px 10px', borderRadius: '6px' }}>
+            ⚙️ Customize KPIs
+          </button>
+          <span className="mono" style={{ color: 'var(--muted)', fontSize: 12 }}>Month: {summary.currentMonth}</span>
+        </div>
+      </div>
+      
+      {showCustomizer && (
+        <div className="card" style={{ marginBottom: '20px', padding: '16px', background: 'var(--surface2)', border: '1.5px solid var(--border)', animation: 'su .15s ease-out' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              ⚙️ Dashboard KPI Customization (Select 4 to 6 metrics)
+            </span>
+            <button className="btn sm primary" style={{ padding: '3px 8px', fontSize: '11px' }} onClick={() => setShowCustomizer(false)}>
+              Close
+            </button>
+          </div>
+          <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '0 0 12px 0' }}>
+            Choose which metrics you want to prioritize on your dashboard.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '8px' }}>
+            {allKpiOptions.map(opt => {
+              const isSelected = selectedKpis.includes(opt.id);
+              return (
+                <label key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'var(--surface)', borderRadius: '6px', border: isSelected ? '1.5px solid var(--accent)' : '1px solid var(--border)', cursor: 'pointer', transition: 'all 0.15s' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={isSelected} 
+                    disabled={!isSelected && selectedKpis.length >= 6}
+                    onChange={() => handleToggleKpi(opt.id)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600 }}>{opt.label}</span>
+                    <span style={{ fontSize: '10px', color: 'var(--muted)' }} className="mono">{opt.val}</span>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
       
       {/* Predefined Credit Limit Threshold Warning Banner */}
       {exceededParties.length > 0 && (

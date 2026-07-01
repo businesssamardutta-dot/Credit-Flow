@@ -180,6 +180,83 @@ export default function App() {
     }
   }, [authChecking, authEmail, refresh]);
 
+  const checkAndRunRecurringTransactions = useCallback(async (currentSettings: any, currentSummary: any) => {
+    if (!currentSummary?.currentMonth) return;
+    
+    let runLog: string[] = [];
+    try {
+      runLog = currentSettings.recurringTxnsRunLog ? JSON.parse(currentSettings.recurringTxnsRunLog) : [];
+    } catch (e) {
+      try {
+        const fallback = localStorage.getItem('creditflow_recurring_txns_run_log');
+        runLog = fallback ? JSON.parse(fallback) : [];
+      } catch (err) {}
+    }
+    
+    if (!Array.isArray(runLog)) {
+      runLog = [];
+    }
+
+    const thisMonth = currentSummary.currentMonth;
+    if (runLog.includes(thisMonth)) {
+      return;
+    }
+
+    let recurringTxns: any[] = [];
+    try {
+      recurringTxns = currentSettings.recurringTransactions ? JSON.parse(currentSettings.recurringTransactions) : [];
+    } catch (e) {
+      try {
+        const fallback = localStorage.getItem('creditflow_recurring_txns');
+        recurringTxns = fallback ? JSON.parse(fallback) : [];
+      } catch (err) {}
+    }
+
+    if (!Array.isArray(recurringTxns) || recurringTxns.length === 0) {
+      return;
+    }
+
+    console.log(`[Recurring Txns] Running ${recurringTxns.length} recurring entries for month ${thisMonth}`);
+    toast(`⚙ Auto-processing ${recurringTxns.length} recurring entries for ${thisMonth}...`, 'info');
+
+    let processedCount = 0;
+    for (const rx of recurringTxns) {
+      try {
+        if (rx.type === 'credit') {
+          await api.addCredit(rx.partyId, Number(rx.amount), rx.notes + ' [Auto-Recurring Entry]', thisMonth);
+        } else {
+          await api.recordPayment(rx.partyId, Number(rx.amount), rx.method || 'Cash', rx.ref || 'Auto-Recurring', rx.notes + ' [Auto-Recurring Entry]', thisMonth);
+        }
+        processedCount++;
+      } catch (err: any) {
+        console.error(`[Recurring Txns] Failed to process transaction for party ${rx.partyId}:`, err);
+      }
+    }
+
+    // Update run log
+    const nextRunLog = [...runLog, thisMonth];
+    const nextRunLogStr = JSON.stringify(nextRunLog);
+    try {
+      await api.saveSetting('recurringTxnsRunLog', nextRunLogStr);
+      setSettings((s: any) => ({ ...s, recurringTxnsRunLog: nextRunLogStr }));
+      localStorage.setItem('creditflow_recurring_txns_run_log', nextRunLogStr);
+    } catch (e) {
+      console.error('[Recurring Txns] Failed to save run log:', e);
+    }
+
+    toast(`✅ Auto-processed ${processedCount} recurring transactions for ${thisMonth}!`, 'success');
+    refresh();
+  }, [toast, refresh]);
+
+  const [recurringCheckedMonth, setRecurringCheckedMonth] = useState('');
+
+  useEffect(() => {
+    if (summary?.currentMonth && settings && !loading && recurringCheckedMonth !== summary.currentMonth && authEmail) {
+      setRecurringCheckedMonth(summary.currentMonth);
+      checkAndRunRecurringTransactions(settings, summary);
+    }
+  }, [summary, settings, loading, recurringCheckedMonth, authEmail, checkAndRunRecurringTransactions]);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', settings.theme || 'ocean');
   }, [settings.theme]);
@@ -435,7 +512,7 @@ export default function App() {
               {tab === 'lifting-ledger' && <LiftingLedgerPage parties={parties} toast={toast} />}
               {tab === 'parties' && <PartiesPage parties={parties} toast={toast} refresh={refresh} />}
               {tab === 'ledger' && <LedgerPage months={summary?.allMonths || []} parties={parties} toast={toast} />}
-              {tab === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} saveTheme={saveTheme} toast={toast} refresh={refresh} />}
+              {tab === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} saveTheme={saveTheme} toast={toast} refresh={refresh} parties={parties} summary={summary} />}
             </>
           )}
         </div>
