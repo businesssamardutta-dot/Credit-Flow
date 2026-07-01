@@ -819,16 +819,21 @@ function getMonthData(monthKey){
   }
 
   const d=sh.getDataRange().getValues(); const h=d[0];
-  return d.slice(1).map(r=>{
-    const o={}; h.forEach((k,i)=>o[k]=r[i]);
+  const pIdx = h.indexOf('Party ID');
+  const rows = [];
+  for (let i = 1; i < d.length; i++) {
+    const r = d[i];
+    if (pIdx !== -1 && !String(r[pIdx]).trim()) continue; // Skip empty rows
+    const o={}; h.forEach((k,idx)=>o[k]=r[idx]);
     ['Invoice Date','Target Date','Last Payment Date','Updated At'].forEach(k=>{
       if(o[k] instanceof Date) o[k]=fmtDate(o[k]);
     });
     ['New Credit','Total Debt','Paid Amount','Balance','Opening Balance','Overdue Days','Score'].forEach(k=>{
       o[k]=toNum(o[k]);
     });
-    return o;
-  });
+    rows.push(o);
+  }
+  return rows;
 }
 
 function updateMonthRow(monthKey,rowId,updates){
@@ -1464,8 +1469,10 @@ function getAllMonthSummaries(){
       return;
     }
     const d=sh.getDataRange().getValues(); const h=d[0]; const c=colMap(h);
-    let td=0,tc=0,tp=0,tb=0,oc=0,pc=0,ac=0,dc=0;
+    let td=0,tc=0,tp=0,tb=0,oc=0,pc=0,ac=0,dc=0,partyCount=0;
     d.slice(1).forEach(row=>{
+      if (c['Party ID'] !== undefined && !String(row[c['Party ID']]).trim()) return; // Skip empty rows
+      partyCount++;
       td+=toNum(row[c['Total Debt']]); tc+=toNum(row[c['New Credit']]);
       tp+=toNum(row[c['Paid Amount']]); tb+=toNum(row[c['Balance']]);
       const st=row[c['Status']];
@@ -1475,7 +1482,7 @@ function getAllMonthSummaries(){
     out[monthKey]={month:monthKey,year:monthKey.split('-')[0],
       totalDebt:td,totalCredit:tc,totalPaid:tp,totalBalance:tb,
       overdueCount:oc,paidCount:pc,activeCount:ac,dueSoonCount:dc,
-      partyCount:d.length-1};
+      partyCount:partyCount};
   });
   return out;
 }
