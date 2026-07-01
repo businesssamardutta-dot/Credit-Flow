@@ -113,6 +113,7 @@ export const getDeliveryHistory = async (partyId: string|null, mf: string|null) 
 export const updateMonthRow = async (mk: string, rowId: string, updates: any) => gas('updateMonthRow', mk, rowId, updates);
 export const addCredit = async (partyId: string, amt: number, notes: string, mk: string) => gas('addCredit', partyId, amt, notes, mk);
 export const recordPayment = async (partyId: string, amt: number, method: string, ref: string, notes: string, mk: string) => gas('recordPayment', partyId, amt, method, ref, notes, mk);
+export const syncMonthlyFromLedger = async (monthKey: string) => gas('syncMonthlyFromLedger', monthKey);
 
 export const updateLiftingTarget = async (mk: string, rowId: string, updates: any) => gas('updateLiftingTarget', mk, rowId, updates);
 export const completeLiftingTarget = async (mk: string, rowId: string) => gas('completeLiftingTarget', mk, rowId);

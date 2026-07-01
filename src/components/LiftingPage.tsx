@@ -68,7 +68,7 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
 
   const handleCarryForward = async () => {
     if (!sel) return;
-    if (!window.confirm(`Carry forward lifting targets from the previous month to ${mkLabel(sel)}? This will apply targets, days, and frequencies from the last month for any accounts currently set with 'NO TARGET'.`)) return;
+    if (!window.confirm(`Carry forward lifting targets from the previous month to ${mkLabel(sel)}? This will overwrite the current targets, frequencies, and preferred days with those from the last month.`)) return;
     setBusy(true);
     try {
       try {
@@ -77,7 +77,7 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
           toast(`Successfully carried forward targets for ${res.updated} account(s)!`, 'success');
           reload();
         } else {
-          toast(`No unassigned accounts found to carry forward, or previous month targets matched current targets.`, 'info');
+          toast(`No targets found in the previous month to carry forward.`, 'info');
         }
       } catch (srvError: any) {
         console.warn('Backend carryForwardLiftingTargets failed or is not updated yet. Running robust client-side fallback...', srvError.message);
@@ -112,25 +112,12 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
           }
         });
         
-        // Filter current rows that have status === 'NO TARGET' or target === 0
-        const unassigned = curData.filter((r: any) => {
-          const currentTarget = Number(r['Target Quantity (kg)']) || 0;
-          const currentStatus = String(r['Status'] || '');
-          return currentTarget === 0 || currentStatus === 'NO TARGET';
-        });
-        
-        if (unassigned.length === 0) {
-          toast(`No unassigned accounts ('NO TARGET') found to carry forward in the current month.`, 'info');
-          setBusy(false);
-          return;
-        }
-        
         let updateCount = 0;
-        // Loop through and update unassigned accounts that have historical target in prevMap
-        for (const r of unassigned) {
+        // Loop through and update accounts that have historical target in prevMap
+        for (const r of curData) {
           const pId = String(r['Party ID'] || '').trim();
           const prevRow = prevMap[pId];
-          if (prevRow && prevRow.target > 0) {
+          if (prevRow) {
             const rowId = r['Row ID'];
             await api.updateLiftingTarget(sel, rowId, {
               targetQuantity: prevRow.target,
@@ -145,7 +132,7 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
           toast(`Successfully carried forward targets for ${updateCount} account(s)!`, 'success');
           reload();
         } else {
-          toast(`No historical targets found in the previous month for the currently unassigned accounts.`, 'info');
+          toast(`No historical targets found in the previous month to carry forward.`, 'info');
         }
       }
     } catch (e: any) {

@@ -441,24 +441,25 @@ function carryForwardLiftingTargets(monthKey) {
     let updateCount = 0;
     const nowStr = fmtDate(new Date());
     
+    const c_delivI = ch.indexOf('Delivered Quantity (kg)');
     for (let i = 1; i < cd.length; i++) {
       const pId = String(cd[i][c_pidI]).trim();
       const prevData = prevMap[pId];
-      if (prevData && prevData.target > 0) {
-        // Carry forward if current target is 0 or "NO TARGET"
-        const currentTarget = toNum(cd[i][c_targetI]);
-        const currentStatus = String(cd[i][c_statusI]);
-        if (currentTarget === 0 || currentStatus === 'NO TARGET') {
-          sh.getRange(i + 1, c_targetI + 1).setValue(prevData.target);
-          sh.getRange(i + 1, c_remainI + 1).setValue(prevData.target);
-          sh.getRange(i + 1, c_freqI + 1).setValue(prevData.frequency);
-          sh.getRange(i + 1, c_dayI + 1).setValue(prevData.day);
-          sh.getRange(i + 1, c_statusI + 1).setValue('NOT STARTED');
-          if (c_updI !== -1) {
-            sh.getRange(i + 1, c_updI + 1).setValue(nowStr);
-          }
-          updateCount++;
+      if (prevData) {
+        const delivered = c_delivI !== -1 ? toNum(cd[i][c_delivI]) : 0;
+        const targetVal = prevData.target;
+        const remainVal = Math.max(0, targetVal - delivered);
+        const statusVal = targetVal > 0 ? (remainVal <= 0 ? 'COMPLETED' : 'IN PROGRESS') : 'NO TARGET';
+
+        sh.getRange(i + 1, c_targetI + 1).setValue(targetVal);
+        sh.getRange(i + 1, c_remainI + 1).setValue(remainVal);
+        sh.getRange(i + 1, c_freqI + 1).setValue(prevData.frequency);
+        sh.getRange(i + 1, c_dayI + 1).setValue(prevData.day);
+        sh.getRange(i + 1, c_statusI + 1).setValue(statusVal);
+        if (c_updI !== -1) {
+          sh.getRange(i + 1, c_updI + 1).setValue(nowStr);
         }
+        updateCount++;
       }
     }
     
@@ -664,10 +665,24 @@ function syncMonthlyFromLedger(monthKey) {
   const l_crSrc = lh.indexOf('Credit (Payment)');
   const l_notesSrc = lh.indexOf('Notes');
   
+  if (l_pidSrc === -1 || l_moSrc === -1 || l_dbSrc === -1 || l_crSrc === -1) return;
+
+  // Load initial opening balances of all parties from Parties sheet
+  const initialOp = {};
+  try {
+    const parties = getAllPartiesRaw();
+    parties.forEach(p => {
+      const pId = String(p['Party ID'] || '').trim();
+      if (pId) {
+        initialOp[pId] = toNum(p['Opening Balance']);
+      }
+    });
+  } catch(e) {
+    console.log("Error loading initial party opening balances:", e);
+  }
+  
   const stats = {};
   const lastClosing = {};
-  const l_obSrc = lh.indexOf('Opening Balance');
-  const l_cbSrc = lh.indexOf('Closing Balance');
   
   for(let i=1; i<ledgerData.length; i++) {
     const l = ledgerData[i];
@@ -684,35 +699,38 @@ function syncMonthlyFromLedger(monthKey) {
       recMonth = String(rawMonth || '').trim();
     }
 
+    let debit = toNum(l[l_dbSrc]);
+    let credit = toNum(l[l_crSrc]);
+    
+    // Safeguard against Double-Entry bug 
+    if (debit > 0 && credit > 0 && debit === credit) {
+       const notes = String(l[l_notesSrc]||'').toLowerCase();
+       if(notes.includes("pay") || notes.includes("neft") || notes.includes("rtgs") || notes.includes("cash")) {
+           debit = 0;
+       } else {
+           credit = 0;
+       }
+    }
+
     if (recMonth === monthKey || recMonth.includes(monthKey)) {
       if (!stats[pid].activeInMonth) {
         stats[pid].activeInMonth = true;
-        stats[pid].openingBalance = toNum(l[l_obSrc]);
-      }
-      
-      let debit = toNum(l[l_dbSrc]);
-      let credit = toNum(l[l_crSrc]);
-      
-      // Safeguard against Double-Entry bug 
-      if (debit > 0 && credit > 0 && debit === credit) {
-         const notes = String(l[l_notesSrc]||'').toLowerCase();
-         if(notes.includes("pay") || notes.includes("neft") || notes.includes("rtgs") || notes.includes("cash")) {
-             debit = 0;
-         } else {
-             credit = 0;
-         }
+        stats[pid].openingBalance = lastClosing[pid] !== undefined ? lastClosing[pid] : (initialOp[pid] || 0);
       }
       
       stats[pid].db += debit;
       stats[pid].cr += credit;
     } else if (recMonth < monthKey) {
-      lastClosing[pid] = toNum(l[l_cbSrc]);
+      if (lastClosing[pid] === undefined) {
+        lastClosing[pid] = initialOp[pid] || 0;
+      }
+      lastClosing[pid] = lastClosing[pid] + debit - credit;
     }
   }
 
   for(let p in stats) {
     if (!stats[p].activeInMonth) {
-      stats[p].openingBalance = lastClosing[p] || 0;
+      stats[p].openingBalance = lastClosing[p] !== undefined ? lastClosing[p] : (initialOp[p] || 0);
     }
   }
 
@@ -872,17 +890,52 @@ function getLastClosingBalance(partyId) {
   const c = colMap(d[0]);
   
   const pIdx = c['Party ID'];
-  const clIdx = c['Closing Balance'];
+  const l_dbSrc = c['Debit (New Credit)'];
+  const l_crSrc = c['Credit (Payment)'];
+  const l_notesSrc = c['Notes'];
   
-  if (pIdx === undefined || clIdx === undefined) return 0;
+  if (pIdx === undefined || l_dbSrc === undefined || l_crSrc === undefined) return 0;
   
-  // Search from the bottom up to find the most recent ledger entry
-  for (let i = d.length - 1; i >= 1; i--) {
+  let initialBalance = 0;
+  try {
+    const partiesSh = SS().getSheetByName(CFG.SH.PARTIES);
+    if (partiesSh && partiesSh.getLastRow() >= 2) {
+      const pd = partiesSh.getDataRange().getValues();
+      const pc = colMap(pd[0]);
+      const partyIdCol = pc['Party ID'];
+      const opBalCol = pc['Opening Balance'];
+      if (partyIdCol !== undefined && opBalCol !== undefined) {
+        for (let j = 1; j < pd.length; j++) {
+          if (String(pd[j][partyIdCol]).trim() === String(partyId).trim()) {
+            initialBalance = toNum(pd[j][opBalCol]);
+            break;
+          }
+        }
+      }
+    }
+  } catch(e) {
+    console.log("Error finding party initial balance:", e);
+  }
+  
+  let balance = initialBalance;
+  for (let i = 1; i < d.length; i++) {
     if (String(d[i][pIdx]).trim() === String(partyId).trim()) {
-      return toNum(d[i][clIdx]);
+      let debit = toNum(d[i][l_dbSrc]);
+      let credit = toNum(d[i][l_crSrc]);
+      
+      // Safeguard against Double-Entry bug 
+      if (debit > 0 && credit > 0 && debit === credit) {
+         const notes = String(d[i][l_notesSrc]||'').toLowerCase();
+         if(notes.includes("pay") || notes.includes("neft") || notes.includes("rtgs") || notes.includes("cash")) {
+             debit = 0;
+         } else {
+             credit = 0;
+         }
+      }
+      balance = balance + debit - credit;
     }
   }
-  return 0;
+  return balance;
 }
 
 function addCredit(partyId,amount,notes,monthKey){
@@ -1048,7 +1101,13 @@ function getLedger(monthFilter){
   const findIdx = (keywords) => {
     return h.findIndex(hdr => {
       const s = hdr.toString().toLowerCase();
-      return keywords.some(k => s.includes(k.toLowerCase()));
+      return keywords.some(k => {
+        const kl = k.toLowerCase();
+        if (kl === 'credit') {
+          return s.includes('credit') && !s.includes('debit');
+        }
+        return s.includes(kl);
+      });
     });
   };
 
@@ -1111,6 +1170,7 @@ function getLedger(monthFilter){
   }
   return rows;
 }
+
 
 function listLiftingMonths(){
   const sheets = SS().getSheets();

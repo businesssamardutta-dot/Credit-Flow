@@ -46,39 +46,8 @@ export function MonthlyPage({ months, parties, toast, currentMonth }: any) {
     if (!window.confirm(`Auto-fix and sync ${sel} balances from Ledger?`)) return;
     setIsProcessing(true);
     try {
-      const ledger = await api.getLedger(sel);
-      
-      // Sort ledger chronologically (oldest first) so the first entry provides true Opening Balance
-      const sortedLedger = [...ledger].sort((a: any, b: any) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
-      
-      const partyData: Record<string, { op: number, cred: number, paid: number }> = {};
-      
-      sortedLedger.forEach((l: any) => {
-        const pid = String(l['Party ID']);
-        if (!partyData[pid]) {
-          partyData[pid] = { op: Number(l['Opening Balance']) || 0, cred: 0, paid: 0 };
-        }
-        partyData[pid].cred += Number(l['Debit (New Credit)']) || Number(l['Debit (Credit)']) || Number(l['Debit']) || 0;
-        partyData[pid].paid += Number(l['Credit (Payment)']) || Number(l['Credit']) || 0;
-      });
-
-      let updated = 0;
-      for (const row of data) {
-        const pid = String(row['Party ID']);
-        if (partyData[pid]) {
-          const pd = partyData[pid];
-          // Check if it's different and needs sync
-          if (row['Opening Balance'] !== pd.op || row['New Credit'] !== pd.cred || row['Paid Amount'] !== pd.paid) {
-            await api.updateMonthRow(sel, row['Row ID'], {
-              openingBalance: pd.op,
-              newCredit: pd.cred,
-              paidAmount: pd.paid
-            });
-            updated++;
-          }
-        }
-      }
-      toast(`Synced ${updated} rows from ledger successfully`, 'success');
+      await api.syncMonthlyFromLedger(sel);
+      toast(`Synced and auto-fixed balances from ledger successfully`, 'success');
       reload();
     } catch (e: any) {
       toast('Error syncing: ' + e.message, 'error');
