@@ -7,6 +7,7 @@ export function PartiesPage({ parties, toast, refresh }: any) {
   const [modal, setModal] = useState<any>(null);
   const [filter, setFilter] = useState('');
   const [ledger, setLedger] = useState<any[]>([]);
+  const [scoreSimulatorParty, setScoreSimulatorParty] = useState<any>(null);
 
   // Load ledger to compute dynamic recent transaction volume
   useEffect(() => {
@@ -102,9 +103,17 @@ export function PartiesPage({ parties, toast, refresh }: any) {
                   <td className="mono" style={{ fontWeight: 600, color: vol > 0 ? 'var(--accent)' : 'var(--muted)' }}>
                     {vol > 0 ? fmtRs(vol) : '—'}
                   </td>
-                  <td>
-                    <span className="mono">{p.score}</span>
-                    <div className="score-bar">
+                  <td 
+                    onClick={() => setScoreSimulatorParty(p)} 
+                    style={{ cursor: 'pointer', transition: 'all 0.15s ease' }} 
+                    className="hover-score-cell"
+                    title="Click to launch interactive Credit Risk Grading Simulator"
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span className="mono" style={{ fontWeight: 700 }}>{p.score}</span>
+                      <span style={{ fontSize: '9px', opacity: 0.6, color: 'var(--accent)', textTransform: 'uppercase', fontWeight: 600 }}>📊 Sim</span>
+                    </div>
+                    <div className="score-bar" style={{ marginTop: '4px' }}>
                       <div className="score-fill" style={{ width: p.score + '%', background: p.score > 70 ? 'var(--green)' : p.score > 40 ? 'var(--yellow)' : 'var(--red)' }} />
                     </div>
                   </td>
@@ -145,6 +154,13 @@ export function PartiesPage({ parties, toast, refresh }: any) {
           onClose={() => setModal(null)} 
           onSaved={() => { setModal(null); refresh(); }} 
           toast={toast} 
+        />
+      )}
+
+      {scoreSimulatorParty && (
+        <ScoreSimulatorModal 
+          party={scoreSimulatorParty} 
+          onClose={() => setScoreSimulatorParty(null)} 
         />
       )}
     </div>
@@ -472,3 +488,123 @@ function CSVImportModal({ onClose, onSaved, toast }: any) {
     </div>
   );
 }
+
+function ScoreSimulatorModal({ party, onClose }: any) {
+  const [paymentHistory, setPaymentHistory] = useState(80);
+  const [limitUtilization, setLimitUtilization] = useState(party.balance && party.creditLimit ? Math.min(Math.round((party.balance / party.creditLimit) * 100), 100) : 25);
+  const [relationshipAge, setRelationshipAge] = useState(party.creditDays && party.creditDays.toLowerCase().includes('30') ? 70 : 45);
+
+  const simScore = useMemo(() => {
+    const payContribution = paymentHistory * 0.50;
+    const utilContribution = (100 - limitUtilization) * 0.30;
+    const ageContribution = relationshipAge * 0.20;
+    return Math.round(payContribution + utilContribution + ageContribution);
+  }, [paymentHistory, limitUtilization, relationshipAge]);
+
+  const riskGrade = useMemo(() => {
+    if (simScore >= 80) return { label: 'Grade A+ Elite Credit', color: 'var(--green)', advice: 'Extremely dependable. Eligible for maximum credit extension up to 45 Days.' };
+    if (simScore >= 65) return { label: 'Grade B Stable Risk', color: '#1a6fbb', advice: 'Moderate health. Maintain standard 30-Day limit with periodic checks.' };
+    if (simScore >= 45) return { label: 'Grade C Guarded Risk', color: 'var(--yellow)', advice: 'Higher default risk. Recommend reducing credit days to 15 & strict balance limits.' };
+    return { label: 'Grade D High Exposure', color: 'var(--red)', advice: 'SUSPEND CREDIT SALES. Initiate urgent debt collection protocols immediately.' };
+  }, [simScore]);
+
+  return (
+    <div className="overlay" onClick={onClose} style={{ zIndex: 99999 }}>
+      <div className="modal" style={{ maxWidth: '600px', width: '95%', animation: 'su 0.15s ease-out' }} onClick={e => e.stopPropagation()}>
+        <div className="modal-hdr" style={{ borderBottom: '1.5px solid var(--border)', paddingBottom: '12px' }}>
+          <div>
+            <h2 style={{ fontSize: '16px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              📊 Interactive Credit Risk Grading Simulator
+            </h2>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+              Test risk boundaries dynamically for account: <strong style={{ color: 'var(--text)' }}>{party.accountName}</strong>
+            </p>
+          </div>
+          <button className="act-btn del" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '16px 0' }}>
+          
+          {/* Dynamic grade scorecard */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <span style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.3px' }}>Simulated Flow Score</span>
+              <div className="mono" style={{ fontSize: '32px', fontWeight: 900, color: riskGrade.color, marginTop: '2px', lineHeight: 1 }}>
+                {simScore} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--muted)' }}>/ 100</span>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flex: 1, minWidth: '200px' }}>
+              <span className="badge" style={{ background: riskGrade.color, color: '#ffffff', fontSize: '12px', fontWeight: 700, padding: '4px 10px', borderRadius: '12px', display: 'inline-block' }}>
+                {riskGrade.label}
+              </span>
+              <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '6px 0 0 0', lineHeight: 1.4 }}>{riskGrade.advice}</p>
+            </div>
+          </div>
+
+          {/* Interactive Parameters Sliders */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
+                <span>Payment Integrity History (Weight: 50%)</span>
+                <span className="mono" style={{ color: paymentHistory > 75 ? 'var(--green)' : paymentHistory > 45 ? 'var(--yellow)' : 'var(--red)', fontWeight: 700 }}>
+                  {paymentHistory}% Score
+                </span>
+              </div>
+              <input 
+                type="range" 
+                min="10" 
+                max="100" 
+                value={paymentHistory} 
+                onChange={e => setPaymentHistory(Number(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'ew-resize' }}
+              />
+              <p style={{ fontSize: '10.5px', color: 'var(--muted)', margin: '4px 0 0 0' }}>Models chronological promptness and average payment speed of outstanding dues.</p>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
+                <span>Credit Limit Utilization (Weight: 30%)</span>
+                <span className="mono" style={{ color: limitUtilization > 80 ? 'var(--red)' : limitUtilization > 50 ? 'var(--yellow)' : 'var(--green)', fontWeight: 700 }}>
+                  {limitUtilization}% Limit Utilized
+                </span>
+              </div>
+              <input 
+                type="range" 
+                min="0" 
+                max="100" 
+                value={limitUtilization} 
+                onChange={e => setLimitUtilization(Number(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'ew-resize' }}
+              />
+              <p style={{ fontSize: '10.5px', color: 'var(--muted)', margin: '4px 0 0 0' }}>Simulates outstanding ledger debt exposure relative to predefined limit barriers. Lower is safer.</p>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
+                <span>Business Relationship Maturity (Weight: 20%)</span>
+                <span className="mono" style={{ color: 'var(--accent)', fontWeight: 700 }}>
+                  {relationshipAge}% Stability
+                </span>
+              </div>
+              <input 
+                type="range" 
+                min="10" 
+                max="100" 
+                value={relationshipAge} 
+                onChange={e => setRelationshipAge(Number(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'ew-resize' }}
+              />
+              <p style={{ fontSize: '10.5px', color: 'var(--muted)', margin: '4px 0 0 0' }}>Factors in operational tenure, recurring lifting loyalty, and historical partnership age.</p>
+            </div>
+          </div>
+
+        </div>
+        <div className="modal-ftr" style={{ borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+          <button className="btn primary" onClick={onClose} style={{ width: '100%', padding: '10px' }}>
+            Close & Apply Strategy
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

@@ -507,7 +507,7 @@ export default function App() {
           {loading ? <div className="loading">⟳ Loading…</div> : (
             <>
               {tab === 'dashboard' && <DashboardPage summary={summary} parties={parties} toast={toast} refresh={refresh} setTab={setTab} />}
-              {tab === 'monthly' && <MonthlyPage months={summary?.allMonths || []} parties={parties} toast={toast} currentMonth={summary?.currentMonth} />}
+              {tab === 'monthly' && <MonthlyPage months={summary?.allMonths || []} parties={parties} toast={toast} currentMonth={summary?.currentMonth} settings={settings} setSettings={setSettings} />}
               {tab === 'lifting' && <LiftingPage parties={parties} toast={toast} currentMonth={summary?.currentMonth} />}
               {tab === 'lifting-schedule' && <LiftingSchedulePage parties={parties} toast={toast} currentMonth={summary?.currentMonth} />}
               {tab === 'lifting-ledger' && <LiftingLedgerPage parties={parties} toast={toast} />}

@@ -176,6 +176,57 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
     );
   }, [data, q]);
 
+  const projection = useMemo(() => {
+    if (!kpis || kpis.totalTarget === 0) return null;
+    
+    const today = new Date();
+    // Use sel year/month or actual current date
+    const parts = sel.split('-');
+    const selYear = parseInt(parts[0], 10);
+    const selMonth = parseInt(parts[1], 10);
+    
+    // Check if selected month key is the current actual calendar month
+    const curYear = today.getFullYear();
+    const curMonth = today.getMonth() + 1;
+    const isCurrentActive = (selYear === curYear && selMonth === curMonth);
+    
+    const totalDays = new Date(selYear, selMonth, 0).getDate();
+    const elapsedDays = isCurrentActive ? today.getDate() : totalDays;
+    const timeProgressPercent = Math.round((elapsedDays / totalDays) * 100);
+    
+    const target = kpis.totalTarget;
+    const delivered = kpis.totalDelivered;
+    
+    // projected delivery if same dispatch rate is maintained
+    const projectedWeight = Math.round((delivered / Math.max(elapsedDays, 1)) * totalDays);
+    const projectedPct = Math.round((projectedWeight / target) * 100);
+    const expectedProgressWeight = Math.round((target / totalDays) * elapsedDays);
+    
+    const isAhead = delivered >= expectedProgressWeight;
+    const gap = Math.abs(delivered - expectedProgressWeight);
+    
+    const remainingDays = Math.max(totalDays - elapsedDays, 1);
+    const remainingWeight = Math.max(target - delivered, 0);
+    const requiredDailyDispatch = Math.round(remainingWeight / remainingDays);
+
+    return {
+      isCurrentActive,
+      elapsedDays,
+      totalDays,
+      timeProgressPercent,
+      target,
+      delivered,
+      projectedWeight,
+      projectedPct,
+      expectedProgressWeight,
+      isAhead,
+      gap,
+      remainingDays,
+      requiredDailyDispatch,
+      remainingWeight
+    };
+  }, [kpis, sel]);
+
   if (loadingMonths) return <div className="loading">⟳ Loading lifting sheets…</div>;
 
   const kpiDefs = kpis ? [
@@ -243,6 +294,82 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
         </div>
       )}
 
+      {/* Dynamic Lifting Forecast projection calculator */}
+      {projection && !busy && (
+        <div className="card" style={{ marginBottom: '18px', padding: '16px', border: '1.5px solid var(--border)', background: 'var(--surface2)', borderRadius: '8px', animation: 'su 0.15s ease-out' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+            <div>
+              <h3 style={{ fontSize: '13.5px', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                🔮 End-of-Month Lifting Targets Forecast & Pace Analyzer
+              </h3>
+              <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+                Active period performance metrics: {projection.isCurrentActive ? (
+                  <span>Linear elapsed time is <strong>{projection.timeProgressPercent}%</strong> (Day {projection.elapsedDays} of {projection.totalDays})</span>
+                ) : (
+                  <span>Historical Month Final Projection ({projection.totalDays} Days)</span>
+                )}
+              </p>
+            </div>
+            <span style={{ fontSize: '10px', background: projection.isAhead ? 'rgba(34, 197, 94, 0.1)' : 'rgba(217, 119, 6, 0.1)', color: projection.isAhead ? 'var(--green)' : 'var(--yellow)', padding: '3px 8px', borderRadius: '12px', fontWeight: 700 }}>
+              {projection.isAhead ? '🟢 ON PACE' : '⚠️ DELAY RISK'}
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px', marginBottom: '14px' }}>
+            <div style={{ background: 'var(--surface)', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              <span style={{ fontSize: '10px', color: 'var(--muted)', fontWeight: 600, display: 'block', textTransform: 'uppercase' }}>Projected Final Weight</span>
+              <div className="mono" style={{ fontSize: '16px', fontWeight: 800, color: 'var(--accent)', marginTop: '4px' }}>
+                {fmt(projection.projectedWeight)} <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--muted)' }}>kg</span>
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>
+                Pace: {projection.projectedPct}% of Target
+              </div>
+            </div>
+
+            <div style={{ background: 'var(--surface)', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              <span style={{ fontSize: '10px', color: 'var(--muted)', fontWeight: 600, display: 'block', textTransform: 'uppercase' }}>Linear Expected Target</span>
+              <div className="mono" style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)', marginTop: '4px' }}>
+                {fmt(projection.expectedProgressWeight)} <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--muted)' }}>kg</span>
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>
+                Real: {fmt(projection.delivered)} kg ({Math.round((projection.delivered / projection.target) * 100)}%)
+              </div>
+            </div>
+
+            <div style={{ background: 'var(--surface)', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              <span style={{ fontSize: '10px', color: 'var(--muted)', fontWeight: 600, display: 'block', textTransform: 'uppercase' }}>Expected Variance Pace</span>
+              <div className="mono" style={{ fontSize: '16px', fontWeight: 800, color: projection.isAhead ? 'var(--green)' : 'var(--red)', marginTop: '4px' }}>
+                {projection.isAhead ? '+' : '-'}{fmt(projection.gap)} <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--muted)' }}>kg</span>
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>
+                {projection.isAhead ? 'Ahead of schedule' : 'Behind pace target'}
+              </div>
+            </div>
+          </div>
+
+          {/* Logistics recommendation advice text */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '10px 14px', background: 'var(--surface)', borderRadius: '6px', borderLeft: '3.5px solid var(--accent)' }}>
+            <span style={{ fontSize: '14px', marginTop: '1px' }}>🚚</span>
+            <div>
+              <strong style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.3px', color: 'var(--muted)', display: 'block' }}>
+                CreditFlow Smart Logistics Dispatch Advisory
+              </strong>
+              <p style={{ fontSize: '11.5px', margin: '2px 0 0 0', lineHeight: 1.4, color: 'var(--text)' }}>
+                {projection.isAhead ? (
+                  <span>
+                    <strong>Excellent lifting loyalty:</strong> Outstanding! The accounts are collectively tracking ahead of their expected schedule by <strong>{fmt(projection.gap)} kg</strong>. At this pace, you will comfortably hit 100% of the target before the month ends.
+                  </span>
+                ) : (
+                  <span>
+                    <strong>Under lifting risk:</strong> Dispatch rate is sluggish. In order to fulfill the remaining <strong>{fmt(projection.remainingWeight)} kg</strong> target within the remaining <strong>{projection.remainingDays} days</strong>, the collective accounts must maintain a dispatch flow of <strong>{fmt(projection.requiredDailyDispatch)} kg/day</strong>. We advise sending a polite lifting schedule email to partners with pending balances.
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {busy ? (
         <div className="loading">⟳ Loading {mkLabel(sel)}…</div>
       ) : data.length === 0 ? (
@@ -278,9 +405,22 @@ export function LiftingPage({ parties, toast, currentMonth }: any) {
                   <div style={{ margin: '8px 0 10px' }}>
                     <div className="lpc-bar-row">
                       <span className="lpc-bar-lbl">{r['Delivery Frequency'] || 'Weekly'} · {r['Preferred Day'] || 'Monday'}</span>
-                      <span className="lpc-bar-pct" style={{ color: pc }}>{pct}%</span>
                     </div>
-                    <div className="prog-bar" style={{ width: '100%', height: 8 }}><div className="prog-fill" style={{ width: Math.min(pct, 100) + '%', background: pc }} /></div>
+                    
+                    {/* Visual Progress Bar displaying the ratio of Lifted (Delivered) vs Target */}
+                    <div style={{ marginTop: '8px', borderTop: '1px dashed var(--border)', paddingTop: '8px' }}>
+                      <div className="lpc-bar-row" style={{ marginBottom: '4px' }}>
+                        <span className="lpc-bar-lbl" style={{ fontSize: '11px', fontWeight: 600, color: 'var(--muted)' }}>🚚 Lifted Ratio (Delivered vs Target)</span>
+                        <span className="lpc-bar-pct" style={{ color: pc, fontWeight: 700 }}>{pct}%</span>
+                      </div>
+                      <div className="prog-bar" style={{ width: '100%', height: '10px', background: 'var(--border)', borderRadius: '6px', overflow: 'hidden' }}>
+                        <div className="prog-fill" style={{ width: Math.min(pct, 100) + '%', background: pc, height: '100%', borderRadius: '6px', transition: 'width 0.3s ease' }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--muted)', marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
+                        <span>Lifted: <strong>{fmt(dlv)}</strong> kg</span>
+                        <span>Target: <strong>{fmt(tgt)}</strong> kg</span>
+                      </div>
+                    </div>
                   </div>
                 </> : <div style={{ fontSize: 12, color: 'var(--muted)', margin: '10px 0', fontStyle: 'italic' }}>No target set for this month. Click "Set Target" to add one.</div>}
 

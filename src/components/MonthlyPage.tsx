@@ -4,7 +4,7 @@ import * as api from '../lib/db';
 import { fmtRs, mkLabel } from '../lib/utils';
 import { statusBadge } from '../App';
 
-export function MonthlyPage({ months, parties, toast, currentMonth }: any) {
+export function MonthlyPage({ months, parties, toast, currentMonth, settings, setSettings }: any) {
   const [sel, setSel] = useState(currentMonth || months[months.length - 1] || '');
   const [data, setData] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
@@ -12,6 +12,32 @@ export function MonthlyPage({ months, parties, toast, currentMonth }: any) {
   const [creditModal, setCreditModal] = useState<any>(null);
   const [payModal, setPayModal] = useState<any>(null);
   const [editModal, setEditModal] = useState<any>(null);
+
+  // Monthly Notes states
+  const [noteInput, setNoteInput] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+
+  useEffect(() => {
+    if (sel && settings) {
+      setNoteInput(settings[`monthly_note_${sel}`] || '');
+    }
+  }, [sel, settings]);
+
+  const handleSaveNote = async () => {
+    if (!sel) return;
+    setSavingNote(true);
+    try {
+      await api.saveSetting(`monthly_note_${sel}`, noteInput);
+      if (setSettings) {
+        setSettings((prev: any) => ({ ...prev, [`monthly_note_${sel}`]: noteInput }));
+      }
+      toast(`Monthly note for ${mkLabel(sel)} saved successfully ✓`, 'success');
+    } catch (e: any) {
+      toast(`Failed to save monthly note: ${e.message}`, 'error');
+    } finally {
+      setSavingNote(false);
+    }
+  };
 
   // Visualization state
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -217,6 +243,46 @@ export function MonthlyPage({ months, parties, toast, currentMonth }: any) {
           </div>
         ))}
       </div>
+
+      {/* Monthly Notes & Objectives Card */}
+      {sel && (
+        <div className="card" style={{ marginBottom: '18px', padding: '16px', background: 'var(--surface)', border: '1.5px solid var(--border)', animation: 'su .15s ease-out' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '16px' }}>📌</span>
+              <h3 style={{ fontSize: '13.5px', fontWeight: 700, margin: 0 }}>
+                Notes & Objectives for {mkLabel(sel)}
+              </h3>
+            </div>
+            <button 
+              className="btn sm primary" 
+              onClick={handleSaveNote}
+              disabled={savingNote}
+              style={{ padding: '4px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+            >
+              {savingNote ? '💾 Saving...' : '💾 Save Note'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <textarea
+              className="search-input"
+              style={{ 
+                flex: 1, 
+                minHeight: '44px', 
+                padding: '8px 12px', 
+                fontSize: '12.5px', 
+                borderRadius: '6px', 
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                lineHeight: 1.4
+              }}
+              placeholder={`Attach objectives, growth targets, collection reminders or business plans for ${mkLabel(sel)} (e.g., 'Target: 10% growth'). These notes are saved securely in the cloud...`}
+              value={noteInput}
+              onChange={e => setNoteInput(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
       
       {data.length > 0 && (
         <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(5,1fr)', marginBottom: 18 }}>

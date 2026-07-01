@@ -121,6 +121,28 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
     fetchRecentActivity();
   }, [summary]); // Refresh when dashboard summary updates
 
+  // Financial Summary Report state & dynamic loader
+  const [reportMonth, setReportMonth] = useState(summary?.currentMonth || '');
+  const [reportRows, setReportRows] = useState<any[]>([]);
+  const [loadingReport, setLoadingReport] = useState(false);
+
+  useEffect(() => {
+    if (summary?.currentMonth && !reportMonth) {
+      setReportMonth(summary.currentMonth);
+    }
+  }, [summary]);
+
+  useEffect(() => {
+    if (!reportMonth) return;
+    setLoadingReport(true);
+    api.getMonthData(reportMonth)
+      .then(rows => {
+        setReportRows(rows || []);
+      })
+      .catch(err => console.error("Error loading report rows:", err))
+      .finally(() => setLoadingReport(false));
+  }, [reportMonth]);
+
   const handleSaveNote = () => {
     if (!noteText.trim()) return;
     const selectedParty = parties.find((p: any) => p.partyId === notePartyId);
@@ -229,6 +251,65 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
     return (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
   }, [parties]);
 
+  const repData = useMemo(() => {
+    return ams[reportMonth] || { totalCredit: 0, totalPaid: 0, totalBalance: 0 };
+  }, [ams, reportMonth]);
+
+  const collectionRate = useMemo(() => {
+    return repData.totalCredit > 0 ? Math.round((repData.totalPaid / repData.totalCredit) * 100) : 0;
+  }, [repData]);
+
+  const topReportAccounts = useMemo(() => {
+    return reportRows
+      .filter((r: any) => (Number(r['New Credit']) || 0) > 0 || (Number(r['Paid Amount']) || 0) > 0)
+      .sort((a: any, b: any) => (Number(b['New Credit']) || 0) - (Number(a['New Credit']) || 0))
+      .slice(0, 5);
+  }, [reportRows]);
+
+  const momData = useMemo(() => {
+    if (!summary || !summary.allMonthSummaries || !summary.allMonths) return null;
+    const currKey = summary.currentMonth;
+    const allMonths = summary.allMonths;
+    const idx = allMonths.indexOf(currKey);
+    if (idx <= 0) return null; 
+    const prevKey = allMonths[idx - 1];
+    
+    const currVal = summary.allMonthSummaries[currKey] || {};
+    const prevVal = summary.allMonthSummaries[prevKey] || {};
+    
+    const currCredit = currVal.totalCredit || 0;
+    const prevCredit = prevVal.totalCredit || 0;
+    const creditDiff = currCredit - prevCredit;
+    const creditPct = prevCredit > 0 ? Math.round((creditDiff / prevCredit) * 100) : 0;
+    
+    const currPaid = currVal.totalPaid || 0;
+    const prevPaid = prevVal.totalPaid || 0;
+    const paidDiff = currPaid - prevPaid;
+    const paidPct = prevPaid > 0 ? Math.round((paidDiff / prevPaid) * 100) : 0;
+    
+    const currOutstanding = currVal.totalBalance || 0;
+    const prevOutstanding = prevVal.totalBalance || 0;
+    const outstandingDiff = currOutstanding - prevOutstanding;
+    const outstandingPct = prevOutstanding > 0 ? Math.round((outstandingDiff / prevOutstanding) * 100) : 0;
+
+    return {
+      prevKey,
+      currKey,
+      currCredit,
+      prevCredit,
+      creditPct,
+      creditDiff,
+      currPaid,
+      prevPaid,
+      paidPct,
+      paidDiff,
+      currOutstanding,
+      prevOutstanding,
+      outstandingPct,
+      outstandingDiff
+    };
+  }, [summary]);
+
   return (
     <div>
       <div className="sec-hdr">
@@ -319,6 +400,230 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
       <div className="kpi-grid">
         {kpis.map(k => (<div key={k.label} className="kpi" style={{ '--kpi-accent': k.col } as any}><div className="kpi-label">{k.label}</div><div className="kpi-val">{k.val}</div><div className="kpi-sub">{k.sub}</div></div>))}
       </div>
+
+      {/* MoM Financial Trends & Risk Analyzer Widget */}
+      {momData && (
+        <div className="card" style={{ marginBottom: '22px', border: '1.5px solid var(--border)', background: 'var(--surface2)', padding: '16px', borderRadius: '8px', animation: 'su 0.15s ease-out' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+            <div>
+              <h3 style={{ fontSize: '13.5px', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                📈 Month-over-Month Comparative Risk Analyzer
+              </h3>
+              <p style={{ fontSize: '11.5px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+                Performance metrics comparison: <strong style={{ color: 'var(--accent)' }}>{mkLabel(momData.currKey)}</strong> vs <span style={{ textDecoration: 'underline' }}>{mkLabel(momData.prevKey)}</span>
+              </p>
+            </div>
+            <span style={{ fontSize: '10px', background: 'var(--border)', color: 'var(--text)', padding: '3px 8px', borderRadius: '12px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+              Period Variance
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '14px' }}>
+            {/* New Credits MoM */}
+            <div style={{ padding: '10px 14px', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>CREDIT VOLUME</span>
+                <span className="mono" style={{ 
+                  fontSize: '11px', 
+                  fontWeight: 700, 
+                  color: momData.creditPct > 0 ? 'var(--red)' : 'var(--green)',
+                  background: momData.creditPct > 0 ? 'rgba(239, 68, 68, 0.08)' : 'rgba(34, 197, 94, 0.08)',
+                  padding: '1px 6px',
+                  borderRadius: '4px'
+                }}>
+                  {momData.creditPct >= 0 ? '▲' : '▼'} {Math.abs(momData.creditPct)}%
+                </span>
+              </div>
+              <div className="mono" style={{ fontSize: '16px', fontWeight: 800, marginTop: '4px' }}>
+                {fmtRs(momData.currCredit)}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>
+                Prev: {fmtRs(momData.prevCredit)}
+              </div>
+            </div>
+
+            {/* Total Paid MoM */}
+            <div style={{ padding: '10px 14px', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>COLLECTIONS PAID</span>
+                <span className="mono" style={{ 
+                  fontSize: '11px', 
+                  fontWeight: 700, 
+                  color: momData.paidPct >= 0 ? 'var(--green)' : 'var(--red)',
+                  background: momData.paidPct >= 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                  padding: '1px 6px',
+                  borderRadius: '4px'
+                }}>
+                  {momData.paidPct >= 0 ? '▲' : '▼'} {Math.abs(momData.paidPct)}%
+                </span>
+              </div>
+              <div className="mono" style={{ fontSize: '16px', fontWeight: 800, marginTop: '4px', color: 'var(--green)' }}>
+                {fmtRs(momData.currPaid)}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>
+                Prev: {fmtRs(momData.prevPaid)}
+              </div>
+            </div>
+
+            {/* Net Outstanding MoM */}
+            <div style={{ padding: '10px 14px', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>NET UNRESOLVED</span>
+                <span className="mono" style={{ 
+                  fontSize: '11px', 
+                  fontWeight: 700, 
+                  color: momData.outstandingPct > 0 ? 'var(--red)' : 'var(--green)',
+                  background: momData.outstandingPct > 0 ? 'rgba(239, 68, 68, 0.08)' : 'rgba(34, 197, 94, 0.08)',
+                  padding: '1px 6px',
+                  borderRadius: '4px'
+                }}>
+                  {momData.outstandingPct >= 0 ? '▲' : '▼'} {Math.abs(momData.outstandingPct)}%
+                </span>
+              </div>
+              <div className="mono" style={{ fontSize: '16px', fontWeight: 800, marginTop: '4px', color: 'var(--accent)' }}>
+                {fmtRs(momData.currOutstanding)}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>
+                Prev: {fmtRs(momData.prevOutstanding)}
+              </div>
+            </div>
+          </div>
+
+          {/* MoM Smart Risk Analysis */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '10px 14px', background: 'var(--surface)', borderRadius: '6px', borderLeft: '3.5px solid var(--accent)' }}>
+            <span style={{ fontSize: '14px', marginTop: '1px' }}>🛡️</span>
+            <div>
+              <strong style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.3px', color: 'var(--muted)', display: 'block' }}>
+                CreditFlow Automated Advisory Analysis
+              </strong>
+              <p style={{ fontSize: '11.5px', margin: '2px 0 0 0', lineHeight: 1.4, color: 'var(--text)' }}>
+                {momData.paidPct > momData.creditPct ? (
+                  <span>
+                    <strong>Optimized collections growth:</strong> Total payments grew by {Math.abs(momData.paidPct)}% which outpaces new credit volume ({Math.abs(momData.creditPct)}%). Your cash flow cycle is speeding up, reducing overall bad debt exposure. Asset turning efficiency is outstanding.
+                  </span>
+                ) : momData.creditPct > momData.paidPct ? (
+                  <span>
+                    <strong>Elevated Credit Risk Exposure:</strong> New credit sales grew by {Math.abs(momData.creditPct)}% which exceeds your collections growth rate ({Math.abs(momData.paidPct)}%). Debt is accumulating. We advise conducting credit limit audits on accounts exceeding 75% utilization.
+                  </span>
+                ) : (
+                  <span>
+                    <strong>Balanced Equilibrium:</strong> Credit sales and collection cycles are tracking proportionally. Overall outstanding liability remains balanced at {Math.abs(momData.outstandingPct)}% period-over-period variance. Stable operations.
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Financial Summary Report Widget */}
+      <div className="card" style={{ marginBottom: '22px', border: '1.5px solid var(--border)', background: 'var(--surface)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '16px', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+          <div>
+            <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              📊 Financial Summary Report
+            </h3>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+              Aggregated credits, payments, and net outstanding balance across all parties.
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>Select Month:</span>
+            <select
+              className="search-input"
+              style={{ padding: '4px 10px', fontSize: '12px', minWidth: '130px', borderRadius: '6px' }}
+              value={reportMonth}
+              onChange={e => setReportMonth(e.target.value)}
+            >
+              {monthList.map((m: string) => (
+                <option key={m} value={m}>{mkLabel(m)} ({m})</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+          <div style={{ padding: '12px 16px', background: 'var(--surface2)', borderRadius: '8px', borderLeft: '4px solid #7c3aed' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase' }}>Total Credits</div>
+            <div className="mono" style={{ fontSize: '20px', fontWeight: 800, color: '#7c3aed', marginTop: '4px' }}>{fmtRs(repData.totalCredit)}</div>
+            <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>Goods sold on credit this month</div>
+          </div>
+          <div style={{ padding: '12px 16px', background: 'var(--surface2)', borderRadius: '8px', borderLeft: '4px solid #059669' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase' }}>Total Payments</div>
+            <div className="mono" style={{ fontSize: '20px', fontWeight: 800, color: '#059669', marginTop: '4px' }}>{fmtRs(repData.totalPaid)}</div>
+            <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>Collections recorded this month</div>
+          </div>
+          <div style={{ padding: '12px 16px', background: 'var(--surface2)', borderRadius: '8px', borderLeft: '4px solid #1a6fbb' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase' }}>Net Outstanding Balance</div>
+            <div className="mono" style={{ fontSize: '20px', fontWeight: 800, color: '#1a6fbb', marginTop: '4px' }}>{fmtRs(repData.totalBalance)}</div>
+            <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>Unresolved liability for {mkLabel(reportMonth)}</div>
+          </div>
+        </div>
+
+        {/* Collection Efficiency Ratio Progress Bar */}
+        <div style={{ marginBottom: '20px', padding: '12px 16px', background: 'var(--surface2)', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600 }}>Collection efficiency ratio</span>
+            <span className="mono" style={{ fontSize: '12px', fontWeight: 700, color: collectionRate >= 80 ? 'var(--green)' : collectionRate >= 50 ? 'var(--yellow)' : 'var(--red)' }}>
+              {collectionRate}%
+            </span>
+          </div>
+          <div className="prog-bar" style={{ width: '100%', height: '8px' }}>
+            <div 
+              className="prog-fill" 
+              style={{ 
+                width: `${Math.min(collectionRate, 100)}%`, 
+                background: collectionRate >= 80 ? 'var(--green)' : collectionRate >= 50 ? 'var(--yellow)' : 'var(--red)' 
+              }} 
+            />
+          </div>
+        </div>
+
+        {/* Monthly Breakdown Active Accounts Mini-Table */}
+        <div>
+          <h4 style={{ fontSize: '12.5px', fontWeight: 700, margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.3px', color: 'var(--muted)' }}>
+            ⚡ Month-Level Activity Breakdown (Top Active Customers)
+          </h4>
+          {loadingReport ? (
+            <div style={{ padding: '20px 0', textAlign: 'center', fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+              ⟳ Compiling account-level breakdown...
+            </div>
+          ) : topReportAccounts.length === 0 ? (
+            <div style={{ padding: '20px 0', textAlign: 'center', fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', background: 'var(--surface2)', borderRadius: '6px' }}>
+              No ledger activity recorded for {mkLabel(reportMonth)}.
+            </div>
+          ) : (
+            <div className="tbl-wrap" style={{ margin: 0, border: '1px solid var(--border)' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ fontSize: '11px', padding: '8px 12px' }}>Account</th>
+                    <th style={{ fontSize: '11px', padding: '8px 12px' }}>Credits (New Credit)</th>
+                    <th style={{ fontSize: '11px', padding: '8px 12px' }}>Payments (Collected)</th>
+                    <th style={{ fontSize: '11px', padding: '8px 12px' }}>Balance (Due)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topReportAccounts.map((row: any, idx: number) => {
+                    const cred = Number(row['New Credit']) || 0;
+                    const paid = Number(row['Paid Amount']) || 0;
+                    const bal = Number(row['Balance']) || 0;
+                    return (
+                      <tr key={idx}>
+                        <td style={{ fontWeight: 600, fontSize: '12px', padding: '8px 12px' }}>{row['Account Name']}</td>
+                        <td className="mono" style={{ fontSize: '11px', color: '#7c3aed', padding: '8px 12px' }}>{fmtRs(cred)}</td>
+                        <td className="mono" style={{ fontSize: '11px', color: 'var(--green)', padding: '8px 12px' }}>{fmtRs(paid)}</td>
+                        <td className="mono" style={{ fontSize: '11px', color: bal > 0 ? 'var(--red)' : 'var(--green)', fontWeight: 700, padding: '8px 12px' }}>{fmtRs(bal)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
       {(summary.dueSoon || []).length > 0 && (
         <div className="card" style={{ marginBottom: 22, borderColor: '#fcd34d', borderWidth: 2 }}>
           <div className="card-title" style={{ color: '#92400e' }}>⚠ Due in Next 2 Days ({summary.dueSoon.length})</div>
