@@ -298,6 +298,49 @@ export function LedgerPage({ months, toast }: any) {
         </div>
       </div>
 
+      {/* Predefined Credit Limit Threshold Warning Banner */}
+      {(() => {
+        const exceeded = (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
+        if (exceeded.length === 0) return null;
+        return (
+          <div className="no-print" style={{
+            background: '#fee2e2', 
+            border: '1.5px solid #fca5a5', 
+            borderRadius: '8px', 
+            padding: '14px 18px', 
+            marginBottom: '20px', 
+            color: '#991b1b',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            boxShadow: '0 4px 12px rgba(239, 68, 68, 0.08)',
+            animation: 'su .15s ease-out'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '14px' }}>
+              <span style={{ fontSize: '18px' }}>⚠️</span>
+              <span style={{ letterSpacing: '0.5px' }}>CREDIT LIMIT EXCEEDED WARNING</span>
+              <span style={{ fontSize: '11px', background: '#fecaca', padding: '2px 8px', borderRadius: '12px', color: '#991b1b', border: '1px solid #f87171', marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                {exceeded.length} {exceeded.length === 1 ? 'Party' : 'Parties'}
+              </span>
+            </div>
+            <p style={{ fontSize: '12.5px', margin: 0, opacity: 0.95, lineHeight: 1.4 }}>
+              The following customer accounts have crossed their predefined credit thresholds. Immediate collection action or hold is recommended:
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px', marginTop: '6px' }}>
+              {exceeded.map((p: any) => (
+                <div key={p.partyId} style={{ background: '#ffffff', border: '1px solid #fee2e2', borderRadius: '6px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                  <span style={{ fontWeight: 600, color: '#1f2937' }}>🏢 {p.accountName}</span>
+                  <div style={{ textAlign: 'right' }}>
+                    <div className="mono" style={{ fontWeight: 700, color: '#dc2626' }}>{fmtRs(p.balance)}</div>
+                    <div className="mono" style={{ fontSize: '10px', color: '#6b7280' }}>Limit: {fmtRs(p.creditLimit)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Filter and Period Selection Configuration Row */}
       <div className="card" style={{ padding: '16px', display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end', background: 'var(--surface)' }}>
         
@@ -815,7 +858,8 @@ function LedgerCSVImportModal({ parties, onClose, onSaved, toast }: any) {
           credit: mapping['credit'] !== undefined ? parseFloat(row[mapping['credit']]?.replace(/[^\d.]/g, '')) || 0 : 0,
           closingBalance: mapping['closingBalance'] !== undefined ? parseFloat(row[mapping['closingBalance']]?.replace(/[^\d.]/g, '')) || 0 : 0,
           notes: mapping['notes'] !== undefined ? row[mapping['notes']]?.trim() : '',
-          errors: [] as string[]
+          errors: [] as string[],
+          warnings: [] as string[]
         };
 
         if (!item.accountName) {
@@ -827,6 +871,12 @@ function LedgerCSVImportModal({ parties, onClose, onSaved, toast }: any) {
           } else {
             item.partyId = match.partyId;
             item.accountName = match.accountName; // Use exact spelling
+
+            // Validate against the registered system balance for potential discrepancy
+            const sysBal = match.balance || 0;
+            if (Math.abs(item.openingBalance - sysBal) > 0.05) {
+              item.warnings.push(`System Balance Discrepancy: CSV Opening Balance (₹${item.openingBalance}) differs from actual registered master balance (₹${sysBal})`);
+            }
           }
         }
 
@@ -865,6 +915,7 @@ function LedgerCSVImportModal({ parties, onClose, onSaved, toast }: any) {
 
   const validCount = parsedRows.filter(r => r.errors.length === 0).length;
   const invalidCount = parsedRows.filter(r => r.errors.length > 0).length;
+  const warningCount = parsedRows.filter(r => r.warnings?.length > 0 && r.errors.length === 0).length;
 
   return (
     <div className={`overlay ${busy ? 'pointer-events-none' : ''}`} onClick={e => !busy && e.target === e.currentTarget && onClose()}>
@@ -948,6 +999,11 @@ function LedgerCSVImportModal({ parties, onClose, onSaved, toast }: any) {
                 <strong style={{ fontSize: '13px' }}>Validation Result Summary:</strong>
                 <div style={{ display: 'flex', gap: '12px' }}>
                   <span className="badge badge-paid" style={{ fontSize: '10px' }}>{validCount} Ready</span>
+                  {warningCount > 0 && (
+                    <span className="badge badge-duesoon" style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', borderColor: '#fcd34d' }}>
+                      ⚠️ {warningCount} Discrepancy Warnings
+                    </span>
+                  )}
                   {invalidCount > 0 && <span className="badge badge-overdue" style={{ fontSize: '10px' }}>{invalidCount} Errors</span>}
                 </div>
               </div>
@@ -962,25 +1018,40 @@ function LedgerCSVImportModal({ parties, onClose, onSaved, toast }: any) {
                       <th style={{ padding: '8px' }}>Opening</th>
                       <th style={{ padding: '8px' }}>Dr / Cr</th>
                       <th style={{ padding: '8px' }}>Closing</th>
-                      <th style={{ padding: '8px' }}>Details / Errors</th>
+                      <th style={{ padding: '8px' }}>Details / Errors / Discrepancies</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {parsedRows.map((r, i) => (
-                      <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: r.errors.length > 0 ? 'rgba(239, 68, 68, 0.08)' : 'transparent' }}>
-                        <td style={{ padding: '8px', textAlign: 'center' }}>
-                          {r.errors.length > 0 ? '❌' : '✅'}
-                        </td>
-                        <td style={{ padding: '8px' }} className="mono">{r.timestamp}</td>
-                        <td style={{ padding: '8px', fontWeight: 600 }}>{r.accountName || '—'}</td>
-                        <td style={{ padding: '8px' }} className="mono">{fmtRs(r.openingBalance)}</td>
-                        <td style={{ padding: '8px' }} className="mono">+{fmtRs(r.debit)} / -{fmtRs(r.credit)}</td>
-                        <td style={{ padding: '8px', fontWeight: 600 }} className="mono">{fmtRs(r.closingBalance)}</td>
-                        <td style={{ padding: '8px', color: r.errors.length > 0 ? 'var(--red)' : 'var(--muted)' }}>
-                          {r.errors.length > 0 ? r.errors.join('; ') : 'Ready to import'}
-                        </td>
-                      </tr>
-                    ))}
+                    {parsedRows.map((r, i) => {
+                      const hasErrors = r.errors.length > 0;
+                      const hasWarnings = r.warnings && r.warnings.length > 0;
+                      
+                      let bg = 'transparent';
+                      if (hasErrors) bg = 'rgba(239, 68, 68, 0.08)';
+                      else if (hasWarnings) bg = 'rgba(245, 158, 11, 0.08)';
+
+                      return (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: bg }}>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            {hasErrors ? '❌' : (hasWarnings ? '⚠️' : '✅')}
+                          </td>
+                          <td style={{ padding: '8px' }} className="mono">{r.timestamp}</td>
+                          <td style={{ padding: '8px', fontWeight: 600 }}>{r.accountName || '—'}</td>
+                          <td style={{ padding: '8px' }} className="mono">{fmtRs(r.openingBalance)}</td>
+                          <td style={{ padding: '8px' }} className="mono">+{fmtRs(r.debit)} / -{fmtRs(r.credit)}</td>
+                          <td style={{ padding: '8px', fontWeight: 600 }} className="mono">{fmtRs(r.closingBalance)}</td>
+                          <td style={{ 
+                            padding: '8px', 
+                            color: hasErrors ? 'var(--red)' : (hasWarnings ? '#b45309' : 'var(--green)'),
+                            fontWeight: (hasErrors || hasWarnings) ? 500 : 400
+                          }}>
+                            {hasErrors 
+                              ? r.errors.join('; ') 
+                              : (hasWarnings ? r.warnings.join('; ') : 'Ready to import')}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

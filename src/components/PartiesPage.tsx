@@ -6,12 +6,47 @@ import { fmtRs } from '../lib/utils';
 export function PartiesPage({ parties, toast, refresh }: any) {
   const [modal, setModal] = useState<any>(null);
   const [filter, setFilter] = useState('');
+  const [ledger, setLedger] = useState<any[]>([]);
 
-  const filtered = (parties || []).filter((p: any) => 
-    !filter || 
-    p.accountName?.toLowerCase().includes(filter.toLowerCase()) || 
-    p.contactNo?.includes(filter)
-  );
+  // Load ledger to compute dynamic recent transaction volume
+  useEffect(() => {
+    api.getLedger(null)
+      .then(setLedger)
+      .catch(err => console.warn('Could not load ledger inside PartiesPage:', err));
+  }, []);
+
+  const partyVolumes = useMemo(() => {
+    const volumes: Record<string, number> = {};
+    for (const entry of ledger) {
+      const pId = entry['Party ID'] || '';
+      const name = entry['Account Name'] || '';
+      const debit = Number(entry['Debit (New Credit)']) || 0;
+      const credit = Number(entry['Credit (Payment)']) || 0;
+      const total = debit + credit;
+      if (pId) {
+        volumes[pId] = (volumes[pId] || 0) + total;
+      }
+      if (name) {
+        volumes[name] = (volumes[name] || 0) + total;
+      }
+    }
+    return volumes;
+  }, [ledger]);
+
+  const filtered = (parties || []).filter((p: any) => {
+    const vol = partyVolumes[p.partyId] || partyVolumes[p.accountName] || 0;
+    const searchVal = filter.toLowerCase().trim();
+    if (!searchVal) return true;
+
+    return (
+      p.accountName?.toLowerCase().includes(searchVal) || 
+      p.contactNo?.includes(searchVal) ||
+      p.email?.toLowerCase().includes(searchVal) ||
+      p.address?.toLowerCase().includes(searchVal) ||
+      vol.toString().includes(searchVal) ||
+      fmtRs(vol).toLowerCase().includes(searchVal)
+    );
+  });
 
   const del = async (id: string) => {
     if (!window.confirm('Delete this party?')) return;
@@ -28,8 +63,8 @@ export function PartiesPage({ parties, toast, refresh }: any) {
     <div>
       <div className="sec-hdr">
         <h2>Parties ({(parties || []).length})</h2>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <input className="search-input" placeholder="Search…" value={filter} onChange={e => setFilter(e.target.value)} />
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input className="search-input" placeholder="Search by name, contact, volume…" value={filter} onChange={e => setFilter(e.target.value)} style={{ width: '280px' }} />
           <button className="btn" onClick={() => setModal('csv')}>📥 CSV Import</button>
           <button className="btn primary" onClick={() => setModal('add')}>+ Add Party</button>
         </div>
@@ -40,37 +75,49 @@ export function PartiesPage({ parties, toast, refresh }: any) {
             <tr>
               <th>SL</th>
               <th>Account Name</th>
-              <th>Contact</th>
+              <th>Contact Details</th>
               <th>Credit Days</th>
               <th>Credit Limit</th>
+              <th>Recent Vol</th>
               <th>Score</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((p: any) => (
-              <tr key={p.partyId}>
-                <td className="mono">{p.slNo}</td>
-                <td style={{ fontWeight: 600 }}>{p.accountName}</td>
-                <td className="mono">{p.contactNo}</td>
-                <td className="mono">{p.creditDays}</td>
-                <td className="mono">{p.creditLimit > 0 ? fmtRs(p.creditLimit) : '—'}</td>
-                <td>
-                  <span className="mono">{p.score}</span>
-                  <div className="score-bar">
-                    <div className="score-fill" style={{ width: p.score + '%', background: p.score > 70 ? 'var(--green)' : p.score > 40 ? 'var(--yellow)' : 'var(--red)' }} />
-                  </div>
-                </td>
-                <td>{statusBadge(p.status)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <button className="act-btn edit" onClick={() => setModal(p)}>Edit</button>
-                    <button className="act-btn del" onClick={() => del(p.partyId)}>Del</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {filtered.map((p: any) => {
+              const vol = partyVolumes[p.partyId] || partyVolumes[p.accountName] || 0;
+              return (
+                <tr key={p.partyId}>
+                  <td className="mono">{p.slNo}</td>
+                  <td style={{ fontWeight: 600 }}>{p.accountName}</td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span className="mono" style={{ fontSize: '12px' }}>{p.contactNo || '—'}</span>
+                      {p.email && <span style={{ fontSize: '10px', color: 'var(--muted)' }}>✉ {p.email}</span>}
+                    </div>
+                  </td>
+                  <td className="mono">{p.creditDays}</td>
+                  <td className="mono">{p.creditLimit > 0 ? fmtRs(p.creditLimit) : '—'}</td>
+                  <td className="mono" style={{ fontWeight: 600, color: vol > 0 ? 'var(--accent)' : 'var(--muted)' }}>
+                    {vol > 0 ? fmtRs(vol) : '—'}
+                  </td>
+                  <td>
+                    <span className="mono">{p.score}</span>
+                    <div className="score-bar">
+                      <div className="score-fill" style={{ width: p.score + '%', background: p.score > 70 ? 'var(--green)' : p.score > 40 ? 'var(--yellow)' : 'var(--red)' }} />
+                    </div>
+                  </td>
+                  <td>{statusBadge(p.status)}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button className="act-btn edit" onClick={() => setModal(p)}>Edit</button>
+                      <button className="act-btn del" onClick={() => del(p.partyId)}>Del</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

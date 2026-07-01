@@ -432,6 +432,29 @@ function CreditModal({ row, mk, onClose, onSaved, toast }: any) {
   const [amount, setAmount] = useState(''); 
   const [notes, setNotes] = useState(''); 
   const [busy, setBusy] = useState(false);
+
+  // Restore draft on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`draft_credit_${row['Party ID']}`);
+      if (saved) {
+        const d = JSON.parse(saved);
+        if (d.amount !== undefined) setAmount(d.amount);
+        if (d.notes !== undefined) setNotes(d.notes);
+      }
+    } catch (e) {}
+  }, [row]);
+
+  // Save draft on edit
+  useEffect(() => {
+    try {
+      if (amount || notes) {
+        localStorage.setItem(`draft_credit_${row['Party ID']}`, JSON.stringify({ amount, notes }));
+      } else {
+        localStorage.removeItem(`draft_credit_${row['Party ID']}`);
+      }
+    } catch (e) {}
+  }, [amount, notes, row]);
   
   const save = async () => { 
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) { 
@@ -441,6 +464,9 @@ function CreditModal({ row, mk, onClose, onSaved, toast }: any) {
     setBusy(true); 
     try { 
       await api.addCredit(row['Party ID'], Number(amount), notes, mk); 
+      try {
+        localStorage.removeItem(`draft_credit_${row['Party ID']}`);
+      } catch (e) {}
       onSaved(); 
     } catch (e: any) { 
       toast('Error: ' + e.message, 'error'); 
@@ -482,6 +508,27 @@ function PayModal({ row, mk, onClose, onSaved, toast }: any) {
   const [f, setF] = useState({ amount: '', method: 'Cash', reference: '', notes: '' });
   const [busy, setBusy] = useState(false);
   const fc = (e: any) => setF(p => ({ ...p, [e.target.name]: e.target.value }));
+
+  // Restore draft on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`draft_pay_${row['Party ID']}`);
+      if (saved) {
+        setF(JSON.parse(saved));
+      }
+    } catch (e) {}
+  }, [row]);
+
+  // Save draft on edit
+  useEffect(() => {
+    try {
+      if (f.amount || f.reference || f.notes) {
+        localStorage.setItem(`draft_pay_${row['Party ID']}`, JSON.stringify(f));
+      } else {
+        localStorage.removeItem(`draft_pay_${row['Party ID']}`);
+      }
+    } catch (e) {}
+  }, [f, row]);
   
   const save = async () => { 
     if (!f.amount || isNaN(Number(f.amount)) || Number(f.amount) <= 0) { 
@@ -491,6 +538,9 @@ function PayModal({ row, mk, onClose, onSaved, toast }: any) {
     setBusy(true); 
     try { 
       await api.recordPayment(row['Party ID'], Number(f.amount), f.method, f.reference, f.notes, mk); 
+      try {
+        localStorage.removeItem(`draft_pay_${row['Party ID']}`);
+      } catch (e) {}
       onSaved(); 
     } catch (e: any) { 
       toast('Error: ' + e.message, 'error'); 

@@ -57,9 +57,35 @@ export default function App() {
   const [qeRef, setQeRef] = useState('');
   const [qeBusy, setQeBusy] = useState(false);
 
-  // Auto-align default quick-entry month
+  // Load draft on mount / load
   useEffect(() => {
-    if (summary?.currentMonth) {
+    try {
+      const saved = localStorage.getItem('draft_quick_ledger');
+      if (saved) {
+        const d = JSON.parse(saved);
+        if (d.qePartyId) setQePartyId(d.qePartyId);
+        if (d.qeType) setQeType(d.qeType);
+        if (d.qeMonth) setQeMonth(d.qeMonth);
+        if (d.qeAmount) setQeAmount(d.qeAmount);
+        if (d.qeNotes) setQeNotes(d.qeNotes);
+        if (d.qeMethod) setQeMethod(d.qeMethod);
+        if (d.qeRef) setQeRef(d.qeRef);
+      }
+    } catch (e) {}
+  }, []);
+
+  // Save draft on change
+  useEffect(() => {
+    try {
+      localStorage.setItem('draft_quick_ledger', JSON.stringify({
+        qePartyId, qeType, qeMonth, qeAmount, qeNotes, qeMethod, qeRef
+      }));
+    } catch (e) {}
+  }, [qePartyId, qeType, qeMonth, qeAmount, qeNotes, qeMethod, qeRef]);
+
+  // Auto-align default quick-entry month if no draft is present
+  useEffect(() => {
+    if (summary?.currentMonth && !localStorage.getItem('draft_quick_ledger')) {
       setQeMonth(summary.currentMonth);
     }
   }, [summary]);
@@ -339,6 +365,9 @@ export default function App() {
       setQeNotes('');
       setQeRef('');
       setQeMethod('Cash');
+      try {
+        localStorage.removeItem('draft_quick_ledger');
+      } catch (e) {}
       refresh();
     } catch (err: any) {
       toast('Transaction failed: ' + err.message, 'error');

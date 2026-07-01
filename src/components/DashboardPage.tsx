@@ -179,9 +179,53 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
     { label: 'Avg Score', val: summary.avgScore, sub: 'All parties', col: '#ea580c' },
   ];
 
+  const exceededParties = useMemo(() => {
+    return (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
+  }, [parties]);
+
   return (
     <div>
       <div className="sec-hdr"><h2>Dashboard</h2><span className="mono" style={{ color: 'var(--muted)', fontSize: 12 }}>Month: {summary.currentMonth}</span></div>
+      
+      {/* Predefined Credit Limit Threshold Warning Banner */}
+      {exceededParties.length > 0 && (
+        <div style={{
+          background: '#fee2e2', 
+          border: '1.5px solid #fca5a5', 
+          borderRadius: '8px', 
+          padding: '14px 18px', 
+          marginBottom: '20px', 
+          color: '#991b1b',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          boxShadow: '0 4px 12px rgba(239, 68, 68, 0.08)',
+          animation: 'su .15s ease-out'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '14px' }}>
+            <span style={{ fontSize: '18px' }}>⚠️</span>
+            <span style={{ letterSpacing: '0.5px' }}>CREDIT LIMIT EXCEEDED WARNING</span>
+            <span style={{ fontSize: '11px', background: '#fecaca', padding: '2px 8px', borderRadius: '12px', color: '#991b1b', border: '1px solid #f87171', marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+              {exceededParties.length} {exceededParties.length === 1 ? 'Party' : 'Parties'}
+            </span>
+          </div>
+          <p style={{ fontSize: '12.5px', margin: 0, opacity: 0.95, lineHeight: 1.4 }}>
+            The following customer accounts have crossed their predefined credit thresholds. Immediate collection action or hold is recommended:
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px', marginTop: '6px' }}>
+            {exceededParties.map((p: any) => (
+              <div key={p.partyId} style={{ background: '#ffffff', border: '1px solid #fee2e2', borderRadius: '6px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                <span style={{ fontWeight: 600, color: '#1f2937' }}>🏢 {p.accountName}</span>
+                <div style={{ textAlign: 'right' }}>
+                  <div className="mono" style={{ fontWeight: 700, color: '#dc2626' }}>{fmtRs(p.balance)}</div>
+                  <div className="mono" style={{ fontSize: '10px', color: '#6b7280' }}>Limit: {fmtRs(p.creditLimit)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="kpi-grid">
         {kpis.map(k => (<div key={k.label} className="kpi" style={{ '--kpi-accent': k.col } as any}><div className="kpi-label">{k.label}</div><div className="kpi-val">{k.val}</div><div className="kpi-sub">{k.sub}</div></div>))}
       </div>
