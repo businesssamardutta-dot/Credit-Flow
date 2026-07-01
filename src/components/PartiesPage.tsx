@@ -3,11 +3,12 @@ import * as api from '../lib/db';
 import { statusBadge } from '../App';
 import { fmtRs } from '../lib/utils';
 
-export function PartiesPage({ parties, toast, refresh }: any) {
+export function PartiesPage({ parties, toast, refresh, settings, setSettings }: any) {
   const [modal, setModal] = useState<any>(null);
   const [filter, setFilter] = useState('');
   const [ledger, setLedger] = useState<any[]>([]);
   const [scoreSimulatorParty, setScoreSimulatorParty] = useState<any>(null);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('All');
 
   // Load ledger to compute dynamic recent transaction volume
   useEffect(() => {
@@ -15,6 +16,18 @@ export function PartiesPage({ parties, toast, refresh }: any) {
       .then(setLedger)
       .catch(err => console.warn('Could not load ledger inside PartiesPage:', err));
   }, []);
+
+  const partyCategories = useMemo(() => {
+    if (!settings || !settings.party_categories) return {};
+    try {
+      return typeof settings.party_categories === 'string'
+        ? JSON.parse(settings.party_categories)
+        : settings.party_categories;
+    } catch (e) {
+      console.warn('Could not parse party_categories setting:', e);
+      return {};
+    }
+  }, [settings]);
 
   const partyVolumes = useMemo(() => {
     const volumes: Record<string, number> = {};
@@ -34,7 +47,32 @@ export function PartiesPage({ parties, toast, refresh }: any) {
     return volumes;
   }, [ledger]);
 
+  const counts = useMemo(() => {
+    const list = parties || [];
+    const c = { All: list.length, Supplier: 0, Retailer: 0, Distributor: 0, Other: 0, Unassigned: 0 };
+    list.forEach((p: any) => {
+      const cat = partyCategories[p.partyId] || 'Unassigned';
+      if (cat === 'Supplier') c.Supplier++;
+      else if (cat === 'Retailer') c.Retailer++;
+      else if (cat === 'Distributor') c.Distributor++;
+      else if (cat === 'Other') c.Other++;
+      else c.Unassigned++;
+    });
+    return c;
+  }, [parties, partyCategories]);
+
   const filtered = (parties || []).filter((p: any) => {
+    const cat = partyCategories[p.partyId] || 'Unassigned';
+    
+    // Category Segmentation Filter
+    if (selectedCategoryFilter !== 'All') {
+      if (selectedCategoryFilter === 'Unassigned') {
+        if (cat && cat !== 'Unassigned') return false;
+      } else {
+        if (cat !== selectedCategoryFilter) return false;
+      }
+    }
+
     const vol = partyVolumes[p.partyId] || partyVolumes[p.accountName] || 0;
     const searchVal = filter.toLowerCase().trim();
     if (!searchVal) return true;
@@ -44,6 +82,7 @@ export function PartiesPage({ parties, toast, refresh }: any) {
       p.contactNo?.includes(searchVal) ||
       p.email?.toLowerCase().includes(searchVal) ||
       p.address?.toLowerCase().includes(searchVal) ||
+      cat.toLowerCase().includes(searchVal) ||
       vol.toString().includes(searchVal) ||
       fmtRs(vol).toLowerCase().includes(searchVal)
     );
@@ -60,16 +99,50 @@ export function PartiesPage({ parties, toast, refresh }: any) {
     }
   };
 
+  const CATEGORY_TABS = [
+    { key: 'All', label: 'All', count: counts.All },
+    { key: 'Supplier', label: 'Suppliers', count: counts.Supplier },
+    { key: 'Retailer', label: 'Retailers', count: counts.Retailer },
+    { key: 'Distributor', label: 'Distributors', count: counts.Distributor },
+    { key: 'Other', label: 'Others', count: counts.Other },
+    { key: 'Unassigned', label: 'Unassigned', count: counts.Unassigned }
+  ];
+
   return (
     <div>
       <div className="sec-hdr">
         <h2>Parties ({(parties || []).length})</h2>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <input className="search-input" placeholder="Search by name, contact, volume…" value={filter} onChange={e => setFilter(e.target.value)} style={{ width: '280px' }} />
+          <input className="search-input" placeholder="Search by name, contact, volume, category…" value={filter} onChange={e => setFilter(e.target.value)} style={{ width: '280px' }} />
           <button className="btn" onClick={() => setModal('csv')}>📥 CSV Import</button>
           <button className="btn primary" onClick={() => setModal('add')}>+ Add Party</button>
         </div>
       </div>
+
+      {/* Category Segment Filter Tabs */}
+      <div className="month-tabs" style={{ marginBottom: '18px' }}>
+        {CATEGORY_TABS.map(cat => (
+          <button 
+            key={cat.key}
+            className={`mtab ${selectedCategoryFilter === cat.key ? 'active' : ''}`}
+            onClick={() => setSelectedCategoryFilter(cat.key)}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
+          >
+            <span>{cat.label}</span>
+            <span style={{ 
+              fontSize: '10px', 
+              background: selectedCategoryFilter === cat.key ? 'rgba(255,255,255,0.22)' : 'var(--surface2)', 
+              color: selectedCategoryFilter === cat.key ? '#fff' : 'var(--muted)',
+              padding: '1px 6px',
+              borderRadius: '10px',
+              fontFamily: 'var(--font-mono)'
+            }}>
+              {cat.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <div className="tbl-wrap">
         <table>
           <thead>
@@ -88,10 +161,30 @@ export function PartiesPage({ parties, toast, refresh }: any) {
           <tbody>
             {filtered.map((p: any) => {
               const vol = partyVolumes[p.partyId] || partyVolumes[p.accountName] || 0;
+              const cat = partyCategories[p.partyId] || 'Unassigned';
               return (
                 <tr key={p.partyId}>
                   <td className="mono">{p.slNo}</td>
-                  <td style={{ fontWeight: 600 }}>{p.accountName}</td>
+                  <td style={{ fontWeight: 600 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <span style={{ fontSize: '13px' }}>{p.accountName}</span>
+                      <div>
+                        <span className="badge" style={{ 
+                          fontSize: '9px', 
+                          padding: '1px 6px', 
+                          borderRadius: '4px',
+                          borderColor: 'var(--border2)',
+                          background: cat === 'Supplier' ? 'rgba(59, 130, 246, 0.08)' : cat === 'Retailer' ? 'rgba(16, 185, 129, 0.08)' : cat === 'Distributor' ? 'rgba(245, 158, 11, 0.08)' : 'var(--surface2)',
+                          color: cat === 'Supplier' ? 'var(--accent)' : cat === 'Retailer' ? 'var(--green)' : cat === 'Distributor' ? 'var(--yellow)' : 'var(--muted)',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.3px'
+                        }}>
+                          🏷️ {cat}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
                   <td>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <span className="mono" style={{ fontSize: '12px' }}>{p.contactNo || '—'}</span>
@@ -137,6 +230,8 @@ export function PartiesPage({ parties, toast, refresh }: any) {
           onClose={() => setModal(null)} 
           onSaved={() => { setModal(null); refresh(); toast('Updated ✓', 'success'); }} 
           toast={toast} 
+          settings={settings}
+          setSettings={setSettings}
         />
       )}
       
@@ -146,6 +241,8 @@ export function PartiesPage({ parties, toast, refresh }: any) {
           onClose={() => setModal(null)} 
           onSaved={() => { setModal(null); refresh(); toast('Added ✓', 'success'); }} 
           toast={toast} 
+          settings={settings}
+          setSettings={setSettings}
         />
       )}
 
@@ -167,17 +264,47 @@ export function PartiesPage({ parties, toast, refresh }: any) {
   );
 }
 
-function PartyModal({ party, onClose, onSaved, toast }: any) {
+function PartyModal({ party, onClose, onSaved, toast, settings, setSettings }: any) {
   const [f, setF] = useState(party ? { slNo: party.slNo, accountName: party.accountName, contactNo: party.contactNo, address: party.address || '', email: party.email || '', creditLimit: party.creditLimit || 0, creditDays: party.creditDays || '7 DAYS', paymentMode: party.paymentMode || '' } : { slNo: '', accountName: '', contactNo: '', address: '', email: '', creditLimit: 0, creditDays: '7 DAYS', paymentMode: '' });
   const [busy, setBusy] = useState(false);
   const fc = (e: any) => setF(p => ({ ...p, [e.target.name]: e.target.value }));
+
+  const partyCategories = useMemo(() => {
+    if (!settings || !settings.party_categories) return {};
+    try {
+      return typeof settings.party_categories === 'string'
+        ? JSON.parse(settings.party_categories)
+        : settings.party_categories;
+    } catch (e) {
+      return {};
+    }
+  }, [settings]);
+
+  const [category, setCategory] = useState(party ? (partyCategories[party.partyId] || 'Retailer') : 'Retailer');
 
   const save = async () => {
     if (!f.accountName) { toast('Account name required', 'error'); return; }
     setBusy(true);
     try {
-      if (party) await api.updateParty(party.partyId, f);
-      else await api.addParty(f);
+      let savedPartyId = party ? party.partyId : null;
+      if (party) {
+        await api.updateParty(party.partyId, f);
+      } else {
+        savedPartyId = await api.addParty(f);
+      }
+
+      const activePartyId = savedPartyId || (party && party.partyId);
+      if (activePartyId) {
+        const nextCats = { ...partyCategories };
+        nextCats[activePartyId] = category;
+        await api.saveSetting('party_categories', JSON.stringify(nextCats));
+        if (setSettings) {
+          setSettings((prev: any) => ({
+            ...prev,
+            party_categories: JSON.stringify(nextCats)
+          }));
+        }
+      }
       onSaved();
     } catch (e: any) { 
       toast('Error: ' + e.message, 'error'); 
@@ -203,6 +330,15 @@ function PartyModal({ party, onClose, onSaved, toast }: any) {
             <div className="field"><label>Credit Days</label><select name="creditDays" value={f.creditDays} onChange={fc} disabled={busy}><option>ADVANCE</option><option>3 DAYS</option><option>7 DAYS</option><option>15 DAYS</option><option>30 DAYS</option><option>45 DAYS</option></select></div>
             <div className="field"><label>Credit Limit (₹)</label><input name="creditLimit" type="number" value={f.creditLimit} onChange={fc} disabled={busy} /></div>
             <div className="field"><label>Payment Mode</label><select name="paymentMode" value={f.paymentMode} onChange={fc} disabled={busy}><option value="">Select…</option><option>Cash</option><option>NEFT</option><option>RTGS</option><option>UPI</option><option>Cheque</option></select></div>
+            <div className="field">
+              <label>Party Category</label>
+              <select value={category} onChange={e => setCategory(e.target.value)} disabled={busy}>
+                <option value="Retailer">Retailer</option>
+                <option value="Supplier">Supplier</option>
+                <option value="Distributor">Distributor</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
           </div>
         </div>
         <div className="modal-ftr">

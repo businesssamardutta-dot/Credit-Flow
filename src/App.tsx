@@ -511,7 +511,7 @@ export default function App() {
               {tab === 'lifting' && <LiftingPage parties={parties} toast={toast} currentMonth={summary?.currentMonth} />}
               {tab === 'lifting-schedule' && <LiftingSchedulePage parties={parties} toast={toast} currentMonth={summary?.currentMonth} />}
               {tab === 'lifting-ledger' && <LiftingLedgerPage parties={parties} toast={toast} />}
-              {tab === 'parties' && <PartiesPage parties={parties} toast={toast} refresh={refresh} />}
+              {tab === 'parties' && <PartiesPage parties={parties} toast={toast} refresh={refresh} settings={settings} setSettings={setSettings} />}
               {tab === 'ledger' && <LedgerPage months={summary?.allMonths || []} parties={parties} toast={toast} />}
               {tab === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} saveTheme={saveTheme} toast={toast} refresh={refresh} parties={parties} summary={summary} />}
             </>
