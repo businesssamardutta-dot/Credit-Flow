@@ -34,6 +34,10 @@ function doPost(e) {
     else if (payload.func === 'resetLiftingDeliveries') result = resetLiftingDeliveries.apply(null, payload.args);
     else if (payload.func === 'recordDelivery') result = recordDelivery.apply(null, payload.args);
     else if (payload.func === 'carryForwardLiftingTargets') result = carryForwardLiftingTargets.apply(null, payload.args);
+    else if (payload.func === 'addPartiesBulk') result = addPartiesBulk.apply(null, payload.args);
+    else if (payload.func === 'addLedgerEntriesBulk') result = addLedgerEntriesBulk.apply(null, payload.args);
+    else if (payload.func === 'getAuditLogs') result = getAuditLogs();
+    else if (payload.func === 'sendPartyLedgerEmail') result = sendPartyLedgerEmail.apply(null, payload.args);
     else throw new Error("Unknown function requested: " + payload.func);
 
     return ContentService.createTextOutput(JSON.stringify({success: true, data: result}))
@@ -1673,4 +1677,149 @@ function updateAllScores(){
       updatePartyScore(d[i][c['Party ID']],ns);
     }
   }
+}
+
+function addPartiesBulk(partiesArray) {
+  assertRole([CFG.ROLES.ADMIN, CFG.ROLES.COLLECTOR]);
+  const sh = SS().getSheetByName(CFG.SH.PARTIES);
+  const user = Session.getActiveUser().getEmail() || 'System';
+  const monthKey = mk();
+  
+  try {
+    getOrCreateMonthSheet(monthKey);
+    getOrCreateLiftingSheet(monthKey);
+  } catch(e) {
+    console.log("Bulk pre-sheet creation error:", e);
+  }
+  
+  const addedIds = [];
+  partiesArray.forEach(p => {
+    const id = uid('P');
+    const slNo = p.slNo || '';
+    const name = p.accountName || '';
+    const contact = p.contactNo || '';
+    const address = p.address || '';
+    const email = p.email || '';
+    const limit = toNum(p.creditLimit);
+    const days = p.creditDays || '7 DAYS';
+    const mode = p.paymentMode || '';
+    
+    sh.appendRow([id, slNo, name, contact, address, email, limit, days, 'ACTIVE', 50, mode, user, new Date(), new Date()]);
+    
+    try {
+      syncNewPartyToExistingMonths(id, { accountName: name, contactNo: contact, creditDays: days });
+    } catch(err) {
+      console.log("bulk sync error:", err);
+    }
+    
+    addedIds.push(id);
+    
+    addAuditLog({
+      type: 'PARTY_IMPORT',
+      partyId: id,
+      accountName: name,
+      field: 'CSV Bulk Import',
+      newVal: JSON.stringify(p),
+      details: `Imported party "${name}" via bulk CSV upload.`
+    });
+  });
+  
+  return addedIds;
+}
+
+function addLedgerEntriesBulk(entriesArray) {
+  assertRole([CFG.ROLES.ADMIN, CFG.ROLES.COLLECTOR]);
+  const sh = ensureSheet(CFG.SH.LEDGER, CFG.COLS.LEDGER, '#065f46');
+  const user = Session.getActiveUser().getEmail() || 'System';
+  
+  entriesArray.forEach(e => {
+    const newRow = new Array(CFG.COLS.LEDGER.length).fill("");
+    const colMap = {};
+    CFG.COLS.LEDGER.forEach((header, index) => {
+      colMap[header.toString().trim().toLowerCase()] = index;
+    });
+    
+    const setValue = (targetHeaderNames, value) => {
+      for (let name of targetHeaderNames) {
+        let idx = colMap[name.toLowerCase()];
+        if (idx !== undefined) {
+          newRow[idx] = value;
+          return true;
+        }
+      }
+      return false;
+    };
+    
+    setValue(['Timestamp', 'Date'], e.timestamp ? new Date(e.timestamp) : new Date());
+    setValue(['Party ID'], e.partyId);
+    setValue(['Account Name', 'Account'], e.accountName || '');
+    setValue(['Month'], String(e.month || mk()));
+    setValue(['Opening Balance', 'Opening'], toNum(e.openingBalance));
+    setValue(['Debit (New Credit)', 'Debit (Credit)', 'Debit'], toNum(e.debit));
+    setValue(['Credit (Payment)', 'Credit (Payment)', 'Credit'], toNum(e.credit));
+    setValue(['Closing Balance', 'Closing'], toNum(e.closingBalance));
+    setValue(['Status'], e.status || '');
+    setValue(['Collector', 'User'], user);
+    setValue(['Notes'], e.notes || '');
+    
+    sh.appendRow(newRow);
+    
+    addAuditLog({
+      type: 'LEDGER_IMPORT',
+      partyId: e.partyId,
+      accountName: e.accountName,
+      field: 'CSV Bulk Import',
+      newVal: JSON.stringify(e),
+      details: `Imported ledger entry of ₹${e.debit || e.credit} for "${e.accountName}" via bulk CSV upload.`
+    });
+  });
+  
+  return true;
+}
+
+function getAuditLogs() {
+  const sh = SS().getSheetByName('Audit Logs');
+  if (!sh) return [];
+  const data = sh.getDataRange().getValues();
+  if (data.length < 2) return [];
+  const h = data[0];
+  const out = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const log = {};
+    h.forEach((colName, index) => {
+      log[colName] = row[index];
+    });
+    out.push(log);
+  }
+  out.sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime());
+  return out;
+}
+
+function sendPartyLedgerEmail(partyId, textReport) {
+  const parties = getAllPartiesRaw();
+  const party = parties.find(p => String(p['Party ID']) === String(partyId));
+  if (!party) {
+    throw new Error('Party not found');
+  }
+  const email = party['Email'];
+  const accountName = party['Account Name'];
+  if (!email || !email.includes('@')) {
+    throw new Error(`Party "${accountName}" has no registered email address.`);
+  }
+  
+  const subject = `📑 Account Ledger Statement – ${accountName}`;
+  const body = `Dear ${accountName},\n\nPlease find your ledger statement below:\n\n==================================================\n${textReport}\n==================================================\n\nBest regards,\nCreditFlow PRO Admin`;
+  
+  MailApp.sendEmail(email, subject, body);
+  
+  addAuditLog({
+    type: 'EMAIL_LEDGER',
+    partyId: partyId,
+    accountName: accountName,
+    field: 'Ledger Export',
+    details: `Exported and emailed ledger statement to ${email}`
+  });
+  
+  return true;
 }

@@ -120,3 +120,8 @@ export const completeLiftingTarget = async (mk: string, rowId: string) => gas('c
 export const resetLiftingDeliveries = async (mk: string, rowId: string) => gas('resetLiftingDeliveries', mk, rowId);
 export const recordDelivery = async (mk: string, partyId: string, qty: number, notes: string) => gas('recordDelivery', mk, partyId, qty, notes);
 export const carryForwardLiftingTargets = async (mk: string) => gas('carryForwardLiftingTargets', mk);
+
+export const addPartiesBulk = async (parties: any[]) => gas('addPartiesBulk', parties);
+export const addLedgerEntriesBulk = async (entries: any[]) => gas('addLedgerEntriesBulk', entries);
+export const getAuditLogs = async () => gas('getAuditLogs');
+export const sendPartyLedgerEmail = async (partyId: string, textReport: string) => gas('sendPartyLedgerEmail', partyId, textReport);
