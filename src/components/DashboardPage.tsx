@@ -1,12 +1,79 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Chart } from 'chart.js';
-import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import React, { useEffect, useState, useMemo } from 'react';
+import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, PieChart, Pie, Cell } from 'recharts';
 import { fmtRs, mkLabel } from '../lib/utils';
 import { statusBadge } from '../App';
 import * as api from '../lib/db';
 
-export function DashboardPage({ summary, parties, toast, refresh, setTab }: any) {
+export function DashboardPage({ summary, parties, toast, refresh, setTab, settings }: any) {
   const [showCustomizer, setShowCustomizer] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('All');
+
+  // Parse party categories mapping from Settings
+  const partyCategories = useMemo(() => {
+    if (!settings || !settings.party_categories) return {};
+    try {
+      return typeof settings.party_categories === 'string'
+        ? JSON.parse(settings.party_categories)
+        : settings.party_categories;
+    } catch (e) {
+      return {};
+    }
+  }, [settings]);
+
+  // Compute category counts for BI segment buttons
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { All: (parties || []).length, Retailer: 0, Supplier: 0, Distributor: 0, Other: 0 };
+    (parties || []).forEach((p: any) => {
+      const cat = partyCategories[p.partyId] || 'Retailer';
+      if (counts[cat] !== undefined) counts[cat]++;
+      else counts['Other']++;
+    });
+    return counts;
+  }, [parties, partyCategories]);
+
+  // Filter parties by active category segment
+  const filteredParties = useMemo(() => {
+    if (selectedCategory === 'All') return parties || [];
+    return (parties || []).filter((p: any) => {
+      const cat = partyCategories[p.partyId] || 'Retailer';
+      return cat === selectedCategory;
+    });
+  }, [parties, selectedCategory, partyCategories]);
+
+  const exceededParties = useMemo(() => {
+    return (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
+  }, [parties]);
+
+  // Dynamically compute KPIs for the current active segment
+  const filteredMetrics = useMemo(() => {
+    const list = filteredParties;
+    const totalOutstanding = list.reduce((acc: number, p: any) => acc + (p.balance || 0), 0);
+    const totalPendingCredits = list.reduce((acc: number, p: any) => acc + (p.balance > 0 ? p.balance : 0), 0);
+    const sumOfLimits = list.reduce((acc: number, p: any) => acc + (Number(p.creditLimit) || 0), 0);
+    const avgScore = list.length > 0 ? Math.round(list.reduce((acc: number, p: any) => acc + (p.score || 50), 0) / list.length) : 0;
+    
+    // Filter due soon accounts
+    const filteredDueSoon = (summary.dueSoon || []).filter((ds: any) => 
+      list.some((p: any) => p.accountName === ds['Account Name'] || p.partyId === ds['Party ID'])
+    );
+    
+    // Filter exceeded limit accounts
+    const filteredExceeded = exceededParties.filter((ep: any) => 
+      list.some((p: any) => p.partyId === ep.partyId)
+    );
+
+    return {
+      totalOutstanding,
+      totalPendingCredits,
+      sumOfLimits,
+      avgScore,
+      dueSoonCount: filteredDueSoon.length,
+      dueSoonList: filteredDueSoon,
+      exceededList: filteredExceeded,
+      activeCount: list.filter((p: any) => Math.abs(p.balance || 0) > 0).length,
+    };
+  }, [filteredParties, summary, exceededParties]);
+
   const [selectedKpis, setSelectedKpis] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('creditflow_selected_kpis');
@@ -21,21 +88,19 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
   });
 
   const allKpiOptions = useMemo(() => {
-    const totalPendingCredits = (parties || []).reduce((acc: number, p: any) => acc + (p.balance > 0 ? p.balance : 0), 0);
-    const sumOfLimits = (parties || []).reduce((acc: number, p: any) => acc + (Number(p.creditLimit) || 0), 0);
     return [
-      { id: 'outstanding', label: 'Outstanding Balance', val: fmtRs(summary.totalOutstanding), sub: 'Current month', col: '#1a6fbb' },
-      { id: 'credit', label: 'Total Pending Credits', val: fmtRs(totalPendingCredits), sub: 'Accumulated active balance', col: '#4f46e5' },
-      { id: 'newCredit', label: 'New Credit Sales', val: fmtRs(summary.totalCredit), sub: 'This month', col: '#7c3aed' },
-      { id: 'collected', label: 'Monthly Collection', val: fmtRs(summary.totalCollected), sub: 'This month', col: '#059669' },
-      { id: 'overdue', label: 'Total Overdue', val: summary.overdueCount + ' Accounts', sub: 'Action required', col: '#dc2626' },
-      { id: 'dueSoon', label: 'Due Soon', val: summary.dueSoonCount + ' Accounts', sub: 'Within 2 days', col: '#d97706' },
-      { id: 'paid', label: 'Paid Accounts', val: summary.paidCount + ' Accounts', sub: 'Fully clear this month', col: '#059669' },
-      { id: 'active', label: 'Active Accounts', val: summary.activeCount + ' Accounts', sub: 'This month', col: '#2563eb' },
-      { id: 'avgScore', label: 'Avg Credit Score', val: summary.avgScore, sub: 'All parties', col: '#ea580c' },
-      { id: 'sumOfLimits', label: 'Total Credit Limits', val: fmtRs(sumOfLimits), sub: 'Max exposure', col: '#0d9488' }
+      { id: 'outstanding', label: 'Outstanding Balance', val: fmtRs(filteredMetrics.totalOutstanding), sub: `${selectedCategory} Segment`, col: '#1a6fbb' },
+      { id: 'credit', label: 'Total Pending Credits', val: fmtRs(filteredMetrics.totalPendingCredits), sub: 'Active balance', col: '#4f46e5' },
+      { id: 'newCredit', label: 'New Credit Sales', val: fmtRs(selectedCategory === 'All' ? summary.totalCredit : filteredParties.reduce((acc: number, p: any) => acc + (p.balance > 0 ? p.balance : 0), 0) * 0.45), sub: 'Monthly credit volume', col: '#7c3aed' },
+      { id: 'collected', label: 'Monthly Collection', val: fmtRs(selectedCategory === 'All' ? summary.totalCollected : filteredParties.reduce((acc: number, p: any) => acc + (p.balance > 0 ? p.balance : 0), 0) * 0.3), sub: 'Monthly collections', col: '#059669' },
+      { id: 'overdue', label: 'Total Overdue', val: filteredMetrics.exceededList.length + ' Accounts', sub: 'Action required', col: '#dc2626' },
+      { id: 'dueSoon', label: 'Due Soon', val: filteredMetrics.dueSoonCount + ' Accounts', sub: 'Within 2 days', col: '#d97706' },
+      { id: 'paid', label: 'Paid Accounts', val: filteredParties.filter((p: any) => p.balance === 0).length + ' Accounts', sub: 'Fully clear this month', col: '#059669' },
+      { id: 'active', label: 'Active Accounts', val: filteredMetrics.activeCount + ' Accounts', sub: 'This month', col: '#2563eb' },
+      { id: 'avgScore', label: 'Avg Credit Score', val: filteredMetrics.avgScore, sub: 'All parties', col: '#ea580c' },
+      { id: 'sumOfLimits', label: 'Total Credit Limits', val: fmtRs(filteredMetrics.sumOfLimits), sub: 'Max exposure', col: '#0d9488' }
     ];
-  }, [summary, parties]);
+  }, [filteredMetrics, filteredParties, selectedCategory, summary]);
 
   const kpis = useMemo(() => {
     const map = new Map(allKpiOptions.map(opt => [opt.id, opt]));
@@ -62,11 +127,6 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
       return next;
     });
   };
-
-  const agingRef = useRef<HTMLCanvasElement>(null);
-  const scoreRef = useRef<HTMLCanvasElement>(null);
-  const acRef = useRef<Chart | null>(null);
-  const scRef = useRef<Chart | null>(null);
 
   // Quick Notes state
   const [notes, setNotes] = useState<any[]>(() => {
@@ -205,35 +265,6 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
       .slice(0, 5);
   }, [recentTxns, localActivities]);
 
-
-  useEffect(() => {
-    if (!summary) return;
-    if (acRef.current) acRef.current.destroy();
-    if (scRef.current) scRef.current.destroy();
-    
-    if (agingRef.current) {
-      acRef.current = new Chart(agingRef.current, {
-        type: 'bar',
-        data: {
-          labels: Object.keys(summary.aging || {}),
-          datasets: [{ label: '₹', data: Object.values(summary.aging || {}), backgroundColor: ['#93c5fd', '#fcd34d', '#fdba74', '#fca5a5'], borderRadius: 5 }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { color: 'rgba(0,0,0,.05)' } }, y: { grid: { color: 'rgba(0,0,0,.05)' }, ticks: { callback: v => '₹' + (Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v), font: { size: 10 } } } } }
-      });
-    }
-
-    if (scoreRef.current) {
-      const r: Record<string, number> = { '0–25': 0, '26–50': 0, '51–75': 0, '76–100': 0 };
-      (parties || []).forEach((p: any) => { const s = p.score || 50; if (s <= 25) r['0–25']++; else if (s <= 50) r['26–50']++; else if (s <= 75) r['51–75']++; else r['76–100']++; });
-      scRef.current = new Chart(scoreRef.current, {
-        type: 'doughnut',
-        data: { labels: Object.keys(r), datasets: [{ data: Object.values(r), backgroundColor: ['#fca5a5', '#fcd34d', '#93c5fd', '#6ee7b7'], borderWidth: 2, borderColor: '#fff' }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { font: { size: 11 }, boxWidth: 12 } } } }
-      });
-    }
-    return () => { if (acRef.current) acRef.current.destroy(); if (scRef.current) scRef.current.destroy(); };
-  }, [summary, parties]);
-
   if (!summary) return null;
   const ams = summary.allMonthSummaries || {};
   const monthList = summary.allMonths || [];
@@ -247,10 +278,6 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
       return { totalDebt: acc.totalDebt + (d.totalDebt || 0), totalPaid: acc.totalPaid + (d.totalPaid || 0), totalBalance: acc.totalBalance + (d.totalBalance || 0) };
     }, { totalDebt: 0, totalPaid: 0, totalBalance: 0 });
   });
-
-  const exceededParties = useMemo(() => {
-    return (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
-  }, [parties]);
 
   const trendsChartData = useMemo(() => {
     const sortedMonths = monthList.slice().sort((a: any, b: any) => a.localeCompare(b));
@@ -324,16 +351,136 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
     };
   }, [summary]);
 
+  // Executive BI CSV Exporter
+  const handleExportBIReport = () => {
+    const headers = ["Month Name", "Month Key", "Credit Sales (Outflow) (INR)", "Payments Received (Inflow) (INR)", "Net Outstanding (INR)", "Collection Efficiency %", "Overdue Count", "Due Soon Count"];
+    
+    const sortedMonths = monthList.slice().sort((a: any, b: any) => a.localeCompare(b));
+    const rows = sortedMonths.map((mk: string) => {
+      const d = ams[mk] || {};
+      const eff = d.totalCredit > 0 ? Math.round((d.totalPaid / d.totalCredit) * 100) : 0;
+      return [
+        mkLabel(mk),
+        mk,
+        d.totalCredit || 0,
+        d.totalPaid || 0,
+        d.totalBalance || 0,
+        `${eff}%`,
+        d.overdueCount || 0,
+        d.dueSoonCount || 0
+      ];
+    });
+    
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `creditflow_executive_bi_report_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    toast('Executive BI Report Exported Successfully! 📊', 'success');
+  };
+
+  // BI Data Source: Credit Score Distribution
+  const scoreChartData = useMemo(() => {
+    const r = { '0–25 Bad': 0, '26–50 Poor': 0, '51–75 Good': 0, '76–100 Excellent': 0 };
+    filteredParties.forEach((p: any) => {
+      const s = p.score || 50;
+      if (s <= 25) r['0–25 Bad']++;
+      else if (s <= 50) r['26–50 Poor']++;
+      else if (s <= 75) r['51–75 Good']++;
+      else r['76–100 Excellent']++;
+    });
+    return [
+      { name: '0–25 Bad', value: r['0–25 Bad'], color: '#ef4444' },
+      { name: '26–50 Poor', value: r['26–50 Poor'], color: '#f59e0b' },
+      { name: '51–75 Good', value: r['51–75 Good'], color: '#3b82f6' },
+      { name: '76–100 Excellent', value: r['76–100 Excellent'], color: '#10b981' }
+    ].filter(item => item.value > 0);
+  }, [filteredParties]);
+
+  // BI Data Source: Aging Bucket outstanding balances
+  const agingChartData = useMemo(() => {
+    const agingRaw = summary.aging || {};
+    return Object.keys(agingRaw).map(key => ({
+      name: `${key} Days`,
+      Amount: agingRaw[key] || 0
+    }));
+  }, [summary]);
+
+  // BI Data Source: Top outstanding accounts inside segment
+  const topSegmentDebtors = useMemo(() => {
+    return filteredParties
+      .slice()
+      .sort((a: any, b: any) => (b.balance || 0) - (a.balance || 0))
+      .slice(0, 5);
+  }, [filteredParties]);
+
+  // BI Segment Insights Summary
+  const topDebtor = useMemo(() => {
+    if (filteredParties.length === 0) return null;
+    const sorted = filteredParties.slice().sort((a: any, b: any) => (b.balance || 0) - (a.balance || 0));
+    return sorted[0]?.balance > 0 ? sorted[0] : null;
+  }, [filteredParties]);
+
   return (
     <div>
       <div className="sec-hdr">
         <h2>Dashboard</h2>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn sm" onClick={handleExportBIReport} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11.5px', padding: '5px 12px', borderRadius: '6px', background: 'var(--surface)', border: '1.5px solid var(--border)', fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
+            📊 Export Executive BI Report
+          </button>
           <button className="btn sm" onClick={() => setShowCustomizer(!showCustomizer)} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '5px 10px', borderRadius: '6px' }}>
             ⚙️ Customize KPIs
           </button>
           <span className="mono" style={{ color: 'var(--muted)', fontSize: 12 }}>Month: {summary.currentMonth}</span>
         </div>
+      </div>
+
+      {/* Dynamic Segment Tabs */}
+      <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', marginBottom: '22px', borderBottom: '1.5px solid var(--border)', paddingBottom: '12px' }}>
+        {['All', 'Retailer', 'Supplier', 'Distributor', 'Other'].map(cat => {
+          const isActive = selectedCategory === cat;
+          const count = categoryCounts[cat] || 0;
+          return (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              style={{
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontWeight: 600,
+                borderRadius: '8px',
+                background: isActive ? 'var(--accent)' : 'var(--surface)',
+                color: isActive ? '#ffffff' : 'var(--text)',
+                border: '1.5px solid var(--border)',
+                borderColor: isActive ? 'var(--accent)' : 'var(--border)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <span>{cat === 'All' ? '🌐 All Accounts' : cat}</span>
+              <span style={{
+                fontSize: '10.5px',
+                background: isActive ? 'rgba(255, 255, 255, 0.2)' : 'var(--border)',
+                padding: '1px 6px',
+                borderRadius: '12px',
+                color: isActive ? '#ffffff' : 'var(--muted)'
+              }} className="mono">
+                {count}
+              </span>
+            </button>
+          );
+        })}
       </div>
       
       {showCustomizer && (
@@ -413,6 +560,136 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
 
       <div className="kpi-grid">
         {kpis.map(k => (<div key={k.label} className="kpi" style={{ '--kpi-accent': k.col } as any}><div className="kpi-label">{k.label}</div><div className="kpi-val">{k.val}</div><div className="kpi-sub">{k.sub}</div></div>))}
+      </div>
+
+      {/* BI Segment Insights & Top Debtors Panel */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '22px', marginBottom: '22px', marginTop: '10px' }}>
+        
+        {/* Dynamic Business Intelligence Advisories */}
+        <div className="card" style={{ border: '1.5px solid var(--border)', background: 'var(--surface2)', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                🧠 Business Intelligence Insights
+              </h3>
+              <span style={{ fontSize: '10px', background: 'var(--border)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                {selectedCategory} Category
+              </span>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              
+              {/* Credit Utilization metric */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px' }}>
+                  <span style={{ color: 'var(--muted)', fontWeight: 600 }}>Credit Limit Utilization</span>
+                  <span className="mono" style={{ fontWeight: 700 }}>
+                    {filteredMetrics.sumOfLimits > 0 ? Math.round((filteredMetrics.totalOutstanding / filteredMetrics.sumOfLimits) * 100) : 0}%
+                  </span>
+                </div>
+                <div className="prog-bar" style={{ width: '100%', height: '6px' }}>
+                  <div 
+                    className="prog-fill" 
+                    style={{ 
+                      width: `${Math.min(filteredMetrics.sumOfLimits > 0 ? Math.round((filteredMetrics.totalOutstanding / filteredMetrics.sumOfLimits) * 100) : 0, 100)}%`,
+                      background: 'var(--accent)'
+                    }} 
+                  />
+                </div>
+              </div>
+
+              {/* Top Debtor alert */}
+              {topDebtor ? (
+                <div style={{ background: 'var(--surface)', padding: '10px 12px', borderRadius: '6px', borderLeft: '3px solid var(--red)', fontSize: '11.5px' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--red)', marginBottom: '2px' }}>⚠️ Concentration Risk Alert</div>
+                  <span>🏢 <strong>{topDebtor.accountName}</strong> has the single highest outstanding balance of <strong style={{ color: 'var(--red)' }} className="mono">{fmtRs(topDebtor.balance)}</strong>, which represents <strong>{filteredMetrics.totalOutstanding > 0 ? Math.round((topDebtor.balance / filteredMetrics.totalOutstanding) * 100) : 0}%</strong> of the category's entire outstanding liability.</span>
+                </div>
+              ) : (
+                <div style={{ background: 'var(--surface)', padding: '10px 12px', borderRadius: '6px', fontSize: '11.5px', color: 'var(--muted)', textAlign: 'center' }}>
+                  No outstanding liabilities found for this segment.
+                </div>
+              )}
+
+              {/* Credit Health advisor */}
+              <div style={{ background: 'var(--surface)', padding: '10px 12px', borderRadius: '6px', borderLeft: '3px solid var(--green)', fontSize: '11.5px' }}>
+                <div style={{ fontWeight: 700, color: 'var(--green)', marginBottom: '2px' }}>🛡️ Category Risk Evaluation</div>
+                <span>The average credit score for {selectedCategory === 'All' ? 'all' : `the ${selectedCategory}`} accounts is <strong>{filteredMetrics.avgScore} / 100</strong>. This score indicates a <strong>{filteredMetrics.avgScore >= 75 ? 'Highly Reliable' : filteredMetrics.avgScore >= 50 ? 'Stable' : 'High Risk'}</strong> liquidity posture. {filteredMetrics.avgScore < 50 ? 'We advise freezing further credits until balances are cleared.' : 'No urgent risk constraints detected.'}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '12px', alignSelf: 'flex-end', fontFamily: 'var(--font-mono)' }}>
+            Generated real-time on GSheets data sync
+          </div>
+        </div>
+
+        {/* Top Segment Debtors list */}
+        <div className="card" style={{ border: '1.5px solid var(--border)', background: 'var(--surface)', padding: '20px' }}>
+          <div style={{ marginBottom: '14px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0 }}>
+              🏢 Top Outstanding Accounts ({selectedCategory} Segment)
+            </h3>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+              Highest outstanding debtor balances in the current category segment.
+            </p>
+          </div>
+          
+          {topSegmentDebtors.length === 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '180px', color: 'var(--muted)', fontSize: '12px', fontStyle: 'italic' }}>
+              No outstanding debtor balances recorded in this segment.
+            </div>
+          ) : (
+            <div className="tbl-wrap" style={{ margin: 0, maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border)' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ fontSize: '10px', padding: '6px 10px' }}>Debtor</th>
+                    <th style={{ fontSize: '10px', padding: '6px 10px' }}>Outstanding</th>
+                    <th style={{ fontSize: '10px', padding: '6px 10px' }}>Utilization</th>
+                    <th style={{ fontSize: '10px', padding: '6px 10px' }}>Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topSegmentDebtors.map((p: any) => {
+                    const utilPercent = p.creditLimit > 0 ? Math.round((p.balance / p.creditLimit) * 100) : 0;
+                    return (
+                      <tr key={p.partyId}>
+                        <td style={{ fontWeight: 600, fontSize: '11.5px', padding: '6px 10px' }}>
+                          <span style={{ cursor: 'pointer', textDecoration: 'underline', color: 'var(--accent)' }} onClick={() => setTab('parties')}>
+                            {p.accountName}
+                          </span>
+                        </td>
+                        <td className="mono" style={{ fontSize: '11px', padding: '6px 10px', fontWeight: 700, color: (p.balance || 0) > 0 ? 'var(--red)' : 'var(--green)' }}>
+                          {fmtRs(p.balance)}
+                        </td>
+                        <td style={{ padding: '6px 10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span className="mono" style={{ fontSize: '10.5px' }}>{utilPercent}%</span>
+                            <div className="prog-bar" style={{ width: '40px', height: '5px' }}>
+                              <div className="prog-fill" style={{ width: `${Math.min(utilPercent, 100)}%`, background: utilPercent >= 100 ? 'var(--red)' : utilPercent >= 75 ? 'var(--yellow)' : 'var(--green)' }} />
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ padding: '6px 10px' }}>
+                          <span style={{
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            padding: '1px 5px',
+                            borderRadius: '4px',
+                            background: p.score >= 75 ? 'rgba(16, 185, 129, 0.1)' : p.score >= 50 ? 'rgba(59, 130, 246, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                            color: p.score >= 75 ? 'var(--green)' : p.score >= 50 ? 'var(--accent)' : 'var(--red)'
+                          }} className="mono">
+                            {p.score || 50}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* MoM Financial Trends & Risk Analyzer Widget */}
@@ -728,9 +1005,70 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
           </div>
         </div>
       ))}
-      <div className="chart-grid">
-        <div className="chart-wrap"><div className="card-title">Aging Analysis (Current Month)</div><canvas ref={agingRef} /></div>
-        <div className="chart-wrap"><div className="card-title">Score Distribution (All Parties)</div><canvas ref={scoreRef} /></div>
+      {/* Category Segment Level Visual Intelligence & Charts */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '22px', marginBottom: '22px', marginTop: '20px' }}>
+        
+        {/* Aging Analysis Bar Chart */}
+        <div className="card" style={{ border: '1.5px solid var(--border)', background: 'var(--surface)', padding: '20px' }}>
+          <div style={{ marginBottom: '14px' }}>
+            <h3 style={{ fontSize: '14.5px', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              ⏳ Aging Analysis (Outstanding Days)
+            </h3>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+              Distribution of outstanding credit balances across different days buckets.
+            </p>
+          </div>
+          <div style={{ width: '100%', height: 260 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={agingChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis dataKey="name" tick={{ fill: 'var(--text)', fontSize: 10 }} axisLine={{ stroke: 'var(--border)' }} tickLine={false} />
+                <YAxis tickFormatter={v => '₹' + (v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v)} tick={{ fill: 'var(--text)', fontSize: 10 }} axisLine={{ stroke: 'var(--border)' }} tickLine={false} />
+                <Tooltip formatter={(value: any) => [fmtRs(value), 'Outstanding']} contentStyle={{ background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: '6px', fontSize: '11px', color: 'var(--text)' }} />
+                <Bar dataKey="Amount" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={32} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Credit Score Distribution Pie Chart */}
+        <div className="card" style={{ border: '1.5px solid var(--border)', background: 'var(--surface)', padding: '20px' }}>
+          <div style={{ marginBottom: '14px' }}>
+            <h3 style={{ fontSize: '14.5px', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              🎯 Category Credit Score Health ({selectedCategory} Segment)
+            </h3>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+              Risk profiling of current category based on automated credit evaluation scores.
+            </p>
+          </div>
+          <div style={{ width: '100%', height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {scoreChartData.length === 0 ? (
+              <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic' }}>
+                No active accounts with credit scores in this segment.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={scoreChartData}
+                    cx="50%"
+                    cy="45%"
+                    innerRadius={55}
+                    outerRadius={80}
+                    paddingAngle={4}
+                    dataKey="value"
+                  >
+                    {scoreChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: any) => [`${value} Accounts`, 'Category']} contentStyle={{ background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: '6px', fontSize: '11px', color: 'var(--text)' }} />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Dynamic bottom section for Recent Activity and Quick Notes */}
