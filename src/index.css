@@ -158,3 +158,305 @@ canvas{max-height:100%;}
 .spinner{width:40px;height:40px;border:4px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin-bottom:12px;}
 @keyframes spin{to{transform:rotate(360deg)}}
 .waiting-text{font-family:var(--font-mono);font-size:14px;color:var(--text);font-weight:600;letter-spacing:1px;}
+
+/* ==========================================
+   Command Palette, Quick Notes, & Print styles
+   ========================================== */
+
+/* Command Palette */
+.command-palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.command-palette {
+  background: var(--surface);
+  border: 1.5px solid var(--border2);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 600px;
+  height: fit-content;
+  max-height: 420px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: su .15s ease-out;
+}
+.command-input-container {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+}
+.command-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 15px;
+  font-family: var(--font-body);
+}
+.command-kbd-tip {
+  font-size: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.command-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.command-category {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  padding: 8px 18px 4px;
+}
+.command-item {
+  padding: 10px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  transition: all .1s;
+}
+.command-item:hover, .command-item.selected {
+  background: var(--surface2);
+  color: var(--accent);
+}
+.command-item-label {
+  font-weight: 500;
+}
+.command-item-category {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+/* Recent Activity Timeline */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
+  padding-left: 18px;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border);
+}
+.timeline-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.timeline-dot {
+  position: absolute;
+  left: -18px;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 3px solid var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.timeline-dot.credit-sale { border-color: var(--red); }
+.timeline-dot.payment { border-color: var(--green); }
+.timeline-dot.note { border-color: var(--yellow); }
+.timeline-dot.audit { border-color: var(--accent2); }
+
+.timeline-time {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+.timeline-content {
+  font-size: 12.5px;
+  color: var(--text);
+  font-weight: 550;
+}
+.timeline-desc {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Quick Notes Component */
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.note-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  transition: border-color 0.15s;
+}
+.note-card:hover {
+  border-color: var(--border2);
+}
+.note-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.note-card-party {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+.note-card-text {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.note-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9.5px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+.note-actions {
+  display: flex;
+  gap: 10px;
+}
+.note-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--muted);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+}
+.note-action-btn:hover {
+  color: var(--accent);
+}
+.note-action-btn.del:hover {
+  color: var(--red);
+}
+
+/* Native Print Override Styles */
+@media print {
+  .no-print, .top-header, .topbar, .top-nav, .btn, .search-input, .filter-bar, datalist, .sec-hdr div:last-child {
+    display: none !important;
+  }
+  body, .layout, .main, .content {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .card {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+  .tbl-wrap {
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+  table {
+    width: 100% !important;
+    border: 1px solid #000000 !important;
+  }
+  thead th {
+    background: #f1f5f9 !important;
+    color: #000000 !important;
+    border-bottom: 2px solid #000000 !important;
+  }
+  td {
+    color: #000000 !important;
+    border-bottom: 1px solid #cccccc !important;
+  }
+}
+
+/* Screen-based Print Preview Mode CSS Overrides */
+body.print-preview-active {
+  background: #ffffff !important;
+  color: #000000 !important;
+}
+body.print-preview-active .top-header,
+body.print-preview-active .topbar,
+body.print-preview-active .no-print {
+  display: none !important;
+}
+body.print-preview-active .layout,
+body.print-preview-active .main {
+  height: auto !important;
+  overflow: visible !important;
+}
+body.print-preview-active .content {
+  padding: 24px !important;
+  margin: 0 !important;
+  background: #ffffff !important;
+}
+body.print-preview-active .card {
+  border: none !important;
+  box-shadow: none !important;
+  background: #ffffff !important;
+  padding: 0 !important;
+}
+body.print-preview-active .tbl-wrap {
+  border: 1px solid #cccccc !important;
+  box-shadow: none !important;
+  background: #ffffff !important;
+}
+body.print-preview-active table {
+  background: #ffffff !important;
+}
+body.print-preview-active thead th {
+  background: #f1f5f9 !important;
+  color: #000000 !important;
+  border-bottom: 2px solid #000000 !important;
+}
+body.print-preview-active td {
+  color: #000000 !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+

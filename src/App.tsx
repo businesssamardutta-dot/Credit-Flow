@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Chart, registerables } from 'chart.js';
 import * as api from './lib/db';
 import { fmt, fmtRs, mkLabel } from './lib/utils';
@@ -40,6 +40,48 @@ export default function App() {
   const [snack, setSnack] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
+
+  // Command Palette State
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandSearch, setCommandSearch] = useState('');
+  const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
+
+  // Quick Ledger Entry State
+  const [showQuickEntryModal, setShowQuickEntryModal] = useState(false);
+  const [qePartyId, setQePartyId] = useState('');
+  const [qeType, setQeType] = useState<'credit' | 'payment'>('credit');
+  const [qeMonth, setQeMonth] = useState('');
+  const [qeAmount, setQeAmount] = useState('');
+  const [qeNotes, setQeNotes] = useState('');
+  const [qeMethod, setQeMethod] = useState('Cash');
+  const [qeRef, setQeRef] = useState('');
+  const [qeBusy, setQeBusy] = useState(false);
+
+  // Auto-align default quick-entry month
+  useEffect(() => {
+    if (summary?.currentMonth) {
+      setQeMonth(summary.currentMonth);
+    }
+  }, [summary]);
+
+  // Global Keyboard Shortcuts Event Listener (Ctrl+K and Ctrl+N)
+  useEffect(() => {
+    const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      if (!authEmail) return; // Only trigger shortcuts if authenticated
+
+      const isModifier = e.ctrlKey || e.metaKey;
+      if (isModifier && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+      if (isModifier && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setShowQuickEntryModal(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalShortcuts);
+    return () => window.removeEventListener('keydown', handleGlobalShortcuts);
+  }, [authEmail]);
 
   // Load saved local/session storage email
   useEffect(() => {
@@ -207,9 +249,107 @@ export default function App() {
     } catch (e) {}
   };
 
+  // Command Palette Options and Selection Mechanisms
+  const staticCommands = useMemo(() => [
+    { id: 'nav-dashboard', label: 'Go to Dashboard', category: 'Navigation', action: () => { setTab('dashboard'); } },
+    { id: 'nav-monthly', label: 'Go to Monthly View', category: 'Navigation', action: () => { setTab('monthly'); } },
+    { id: 'nav-lifting', label: 'Go to Goods Lifting', category: 'Navigation', action: () => { setTab('lifting'); } },
+    { id: 'nav-schedule', label: 'Go to Lifting Schedule', category: 'Navigation', action: () => { setTab('lifting-schedule'); } },
+    { id: 'nav-lifting-ledger', label: 'Go to Lifting Ledger', category: 'Navigation', action: () => { setTab('lifting-ledger'); } },
+    { id: 'nav-parties', label: 'Go to Parties', category: 'Navigation', action: () => { setTab('parties'); } },
+    { id: 'nav-ledger', label: 'Go to Ledger & Audits', category: 'Navigation', action: () => { setTab('ledger'); } },
+    { id: 'nav-settings', label: 'Go to Settings', category: 'Navigation', action: () => { setTab('settings'); } },
+    
+    { id: 'act-quick-entry', label: 'Post New Ledger Entry (Ctrl+N)', category: 'Quick Actions', action: () => { setShowQuickEntryModal(true); } },
+    { id: 'act-refresh', label: 'Sync / Refresh Workspace Data', category: 'Quick Actions', action: () => { refresh(); toast('Synchronizing workspace...', 'info'); } },
+    { id: 'act-reminders', label: 'Send Outstanding Reminders', category: 'Quick Actions', action: () => { api.sendReminderEmails().then(c => toast(`${c} reminders sent ✓`, 'success')).catch(e => toast(e.message, 'error')); } },
+    
+    { id: 'theme-ocean', label: 'Switch Theme to Ocean Blue', category: 'Theme Configuration', action: () => { saveTheme('ocean'); } },
+    { id: 'theme-sakura', label: 'Switch Theme to Sakura Cherry', category: 'Theme Configuration', action: () => { saveTheme('sakura'); } },
+    { id: 'theme-forest', label: 'Switch Theme to Forest Green', category: 'Theme Configuration', action: () => { saveTheme('forest'); } },
+    { id: 'theme-amber', label: 'Switch Theme to Amber Rust', category: 'Theme Configuration', action: () => { saveTheme('amber'); } },
+    { id: 'theme-slate', label: 'Switch Theme to Minimal Slate', category: 'Theme Configuration', action: () => { saveTheme('slate'); } },
+    { id: 'theme-lavender', label: 'Switch Theme to Lavender Dusk', category: 'Theme Configuration', action: () => { saveTheme('lavender'); } },
+  ], [refresh, toast]);
+
+  const filteredCommands = useMemo(() => {
+    const query = commandSearch.trim().toLowerCase();
+    const partyCommands = parties
+      .filter(p => !query || p.accountName?.toLowerCase().includes(query))
+      .map(p => ({
+        id: `party-${p.partyId}`,
+        label: `Open Transaction Ledger for ${p.accountName}`,
+        category: 'Parties & Accounts',
+        action: () => {
+          setTab('ledger');
+          try {
+            sessionStorage.setItem('preferred_ledger_party', p.accountName);
+            window.dispatchEvent(new Event('ledger_party_changed'));
+          } catch (e) {}
+        }
+      }));
+
+    const staticFiltered = staticCommands.filter(c => 
+      !query || c.label.toLowerCase().includes(query) || c.category.toLowerCase().includes(query)
+    );
+
+    return [...staticFiltered, ...partyCommands];
+  }, [commandSearch, parties, staticCommands]);
+
+  useEffect(() => {
+    setCommandSelectedIndex(0);
+  }, [commandSearch]);
+
+  const handleCommandKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setCommandSelectedIndex(prev => (prev + 1) % filteredCommands.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setCommandSelectedIndex(prev => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredCommands[commandSelectedIndex]) {
+        filteredCommands[commandSelectedIndex].action();
+        setShowCommandPalette(false);
+      }
+    } else if (e.key === 'Escape') {
+      setShowCommandPalette(false);
+    }
+  };
+
+  // Quick entry ledger post mechanism
+  const handlePostQuickEntry = async () => {
+    if (!qePartyId || !qeAmount || Number(qeAmount) <= 0) {
+      toast('Please choose a party and input a valid amount.', 'error');
+      return;
+    }
+    setQeBusy(true);
+    try {
+      if (qeType === 'credit') {
+        await api.addCredit(qePartyId, Number(qeAmount), qeNotes, qeMonth);
+        toast('Credit Sale posted successfully! ✓', 'success');
+      } else {
+        await api.recordPayment(qePartyId, Number(qeAmount), qeMethod, qeRef, qeNotes, qeMonth);
+        toast('Payment received & posted! ✓', 'success');
+      }
+      setShowQuickEntryModal(false);
+      setQePartyId('');
+      setQeAmount('');
+      setQeNotes('');
+      setQeRef('');
+      setQeMethod('Cash');
+      refresh();
+    } catch (err: any) {
+      toast('Transaction failed: ' + err.message, 'error');
+    } finally {
+      setQeBusy(false);
+    }
+  };
+
   return (
     <div className="layout">
-      <header className="top-header">
+      <header className="top-header no-print">
         <div className="sidebar-brand">
           <h1>CreditFlow PRO</h1>
           <span>{summary?.currentMonth || 'Loading…'}</span>
@@ -222,10 +362,22 @@ export default function App() {
             </div>
           ))}
         </nav>
+
+        {/* Sidebar Shortcut Reference Legend */}
+        <div style={{ marginTop: 'auto', padding: '16px', borderTop: '1px solid var(--border)', fontSize: '11px', color: 'var(--muted)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Command Palette</span>
+            <kbd className="command-kbd-tip">Ctrl+K</kbd>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Quick Entry Form</span>
+            <kbd className="command-kbd-tip">Ctrl+N</kbd>
+          </div>
+        </div>
       </header>
 
       <div className="main">
-        <div className="topbar">
+        <div className="topbar no-print">
           <span className="topbar-title">{nav.find(n => n.id === tab)?.label}</span>
           {authEmail && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', marginRight: '10px' }}>
@@ -259,6 +411,190 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Global Command Palette Modal Overlay */}
+      {showCommandPalette && (
+        <div className="command-palette-overlay" onClick={() => setShowCommandPalette(false)}>
+          <div className="command-palette" onClick={e => e.stopPropagation()}>
+            <div className="command-input-container">
+              <span style={{ fontSize: '16px' }}>🔍</span>
+              <input 
+                type="text"
+                className="command-input"
+                placeholder="Type a command, theme, menu, or party name..."
+                value={commandSearch}
+                onChange={e => setCommandSearch(e.target.value)}
+                onKeyDown={handleCommandKeyDown}
+                autoFocus
+              />
+              <span className="command-kbd-tip">ESC to exit</span>
+            </div>
+            <div className="command-list">
+              {filteredCommands.length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
+                  No matching workspace commands found.
+                </div>
+              ) : (
+                filteredCommands.map((cmd, idx) => {
+                  const isSelected = idx === commandSelectedIndex;
+                  const showHeader = idx === 0 || filteredCommands[idx - 1].category !== cmd.category;
+                  return (
+                    <React.Fragment key={cmd.id}>
+                      {showHeader && (
+                        <div className="command-category">{cmd.category}</div>
+                      )}
+                      <div 
+                        className={`command-item ${isSelected ? 'selected' : ''}`}
+                        onClick={() => {
+                          cmd.action();
+                          setShowCommandPalette(false);
+                        }}
+                        onMouseEnter={() => setCommandSelectedIndex(idx)}
+                      >
+                        <span className="command-item-label">{cmd.label}</span>
+                        <span className="command-item-category">{cmd.category}</span>
+                      </div>
+                    </React.Fragment>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Quick Ledger Entry Modal Overlay */}
+      {showQuickEntryModal && (
+        <div className="overlay" style={{ zIndex: 99999 }}>
+          <div className="modal" style={{ maxWidth: '480px', animation: 'su .15s ease-out' }}>
+            <div className="modal-hdr">
+              <h3>⚡ Quick Ledger Transaction</h3>
+              <button className="modal-close" onClick={() => setShowQuickEntryModal(false)}>✕</button>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '10px 0' }}>
+              <div className="field">
+                <label style={{ fontSize: '11px', fontWeight: 600 }}>Party Account *</label>
+                <select 
+                  style={{ width: '100%', padding: '10px', background: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px' }}
+                  value={qePartyId}
+                  onChange={e => setQePartyId(e.target.value)}
+                >
+                  <option value="">-- Choose Party --</option>
+                  {(parties || []).map(p => (
+                    <option key={p.partyId} value={p.partyId}>{p.accountName}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: '11px', fontWeight: 600 }}>Transaction Type *</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <button 
+                    className={`btn ${qeType === 'credit' ? 'primary' : ''}`}
+                    style={{ fontWeight: 600, padding: '10px' }}
+                    onClick={() => setQeType('credit')}
+                  >
+                    📈 Credit Sale
+                  </button>
+                  <button 
+                    className="btn"
+                    style={{ 
+                      fontWeight: 600, 
+                      padding: '10px',
+                      borderColor: qeType === 'payment' ? 'var(--green)' : '', 
+                      background: qeType === 'payment' ? 'var(--green)' : '', 
+                      color: qeType === 'payment' ? '#ffffff' : '' 
+                    }}
+                    onClick={() => setQeType('payment')}
+                  >
+                    📉 Payment Received
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div className="field">
+                  <label style={{ fontSize: '11px', fontWeight: 600 }}>Accounting Month *</label>
+                  <select 
+                    style={{ width: '100%', padding: '10px', background: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px' }}
+                    value={qeMonth}
+                    onChange={e => setQeMonth(e.target.value)}
+                  >
+                    {(summary?.allMonths || []).map((m: string) => (
+                      <option key={m} value={m}>{mkLabel(m)}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div className="field">
+                  <label style={{ fontSize: '11px', fontWeight: 600 }}>Amount (₹) *</label>
+                  <input 
+                    type="number"
+                    className="search-input"
+                    style={{ width: '100%', padding: '10px' }}
+                    placeholder="0.00"
+                    value={qeAmount}
+                    onChange={e => setQeAmount(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {qeType === 'payment' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <div className="field">
+                    <label style={{ fontSize: '10px', fontWeight: 600 }}>Payment Method</label>
+                    <select 
+                      style={{ width: '100%', padding: '8px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px' }}
+                      value={qeMethod}
+                      onChange={e => setQeMethod(e.target.value)}
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="GPay/UPI">GPay/UPI</option>
+                      <option value="Cheque">Cheque</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label style={{ fontSize: '10px', fontWeight: 600 }}>Ref / Check No.</label>
+                    <input 
+                      type="text"
+                      className="search-input"
+                      style={{ width: '100%', padding: '8px', background: 'var(--surface)' }}
+                      placeholder="e.g. TXN123456"
+                      value={qeRef}
+                      onChange={e => setQeRef(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="field">
+                <label style={{ fontSize: '11px', fontWeight: 600 }}>Remarks / Notes</label>
+                <input 
+                  type="text"
+                  className="search-input"
+                  style={{ width: '100%', padding: '10px' }}
+                  placeholder="e.g. Goods loaded on Truck 4, advance paid"
+                  value={qeNotes}
+                  onChange={e => setQeNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
+                <button className="btn" onClick={() => setShowQuickEntryModal(false)}>Cancel</button>
+                <button 
+                  className="btn primary" 
+                  onClick={handlePostQuickEntry}
+                  disabled={!qePartyId || !qeAmount || Number(qeAmount) <= 0 || qeBusy}
+                >
+                  {qeBusy ? 'Posting Entry...' : 'Confirm Post'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {snack && <div className={`snack ${snack.type}`}>{snack.msg}</div>}
     </div>

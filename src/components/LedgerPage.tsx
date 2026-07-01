@@ -58,9 +58,47 @@ export function LedgerPage({ months, toast }: any) {
   const [showLedgerCsvModal, setShowLedgerCsvModal] = useState(false);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  
+  // Print Mode State
+  const [isPrintMode, setIsPrintMode] = useState(false);
 
   useEffect(() => {
     api.getParties().then(setParties).catch(console.error);
+  }, []);
+
+  // Sync print-preview-active class on body and handle Escape key to exit print preview
+  useEffect(() => {
+    if (isPrintMode) {
+      document.body.classList.add('print-preview-active');
+    } else {
+      document.body.classList.remove('print-preview-active');
+    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isPrintMode) {
+        setIsPrintMode(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.classList.remove('print-preview-active');
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPrintMode]);
+
+  // Command palette navigation listener
+  useEffect(() => {
+    const checkPreferredParty = () => {
+      try {
+        const preferred = sessionStorage.getItem('preferred_ledger_party');
+        if (preferred) {
+          setSelectedParty(preferred);
+          sessionStorage.removeItem('preferred_ledger_party');
+        }
+      } catch (e) {}
+    };
+    checkPreferredParty();
+    window.addEventListener('ledger_party_changed', checkPreferredParty);
+    return () => window.removeEventListener('ledger_party_changed', checkPreferredParty);
   }, []);
 
   const fetchLedger = () => {
@@ -205,6 +243,34 @@ export function LedgerPage({ months, toast }: any) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       
+      {/* Floating Controller Banner for Print Preview Mode */}
+      {isPrintMode && (
+        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, right: 0, background: '#1e293b', color: '#ffffff', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 99999, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', fontFamily: 'var(--font-body)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '18px' }}>🖨️</span>
+            <div style={{ textAlign: 'left' }}>
+              <strong style={{ fontSize: '14px', display: 'block', color: '#ffffff' }}>Print Preview Mode Active</strong>
+              <span style={{ fontSize: '11px', opacity: 0.8 }}>Press <kbd style={{ background: '#334155', padding: '2px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>Ctrl+P</kbd> to print, or <kbd style={{ background: '#334155', padding: '2px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>ESC</kbd> to return.</span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="btn sm primary" onClick={() => window.print()} style={{ background: '#3b82f6', borderColor: '#3b82f6', color: '#fff', fontWeight: 600, padding: '6px 14px', borderRadius: '6px' }}>🖨️ Print Ledger</button>
+            <button className="btn sm" onClick={() => setIsPrintMode(false)} style={{ background: '#475569', borderColor: '#475569', color: '#fff', padding: '6px 14px', borderRadius: '6px' }}>✕ Exit Preview</button>
+          </div>
+        </div>
+      )}
+
+      {/* Printable Document Title Header */}
+      {isPrintMode && (
+        <div style={{ textAlign: 'center', marginBottom: '16px', borderBottom: '2px solid #000000', paddingBottom: '12px', color: '#000000' }}>
+          <h1 style={{ fontSize: '24px', fontWeight: 700, fontFamily: 'var(--font-display)', margin: 0, color: '#000000' }}>CREDITFLOW PRO</h1>
+          <h2 style={{ fontSize: '16px', fontWeight: 600, margin: '4px 0 0 0', color: '#000000' }}>Ledger Statements & Audit Report</h2>
+          <p style={{ fontSize: '11px', margin: '6px 0 0 0', color: '#475569', fontFamily: 'var(--font-mono)' }}>
+            Date Generated: {new Date().toLocaleString()} {selectedMonth ? `| Fiscal Month: ${mkLabel(selectedMonth)}` : '| Fiscal Year Statement'} {selectedParty ? `| Party: ${selectedParty}` : ''}
+          </p>
+        </div>
+      )}
+
       {/* Page Header */}
       <div className="sec-hdr" style={{ margin: 0 }}>
         <div>
@@ -214,6 +280,9 @@ export function LedgerPage({ months, toast }: any) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn" onClick={() => setIsPrintMode(true)}>
+            🖨️ Print Version
+          </button>
           <button className="btn" onClick={openAuditModal}>
             📋 Security Audit Log
           </button>
