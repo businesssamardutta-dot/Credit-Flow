@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import * as api from '../lib/db';
 import { statusBadge } from '../App';
-import { fmtRs } from '../lib/utils';
+import { fmtRs, mkLabel } from '../lib/utils';
 
 export function PartiesPage({ parties, toast, refresh, settings, setSettings }: any) {
   const [modal, setModal] = useState<any>(null);
@@ -9,6 +10,14 @@ export function PartiesPage({ parties, toast, refresh, settings, setSettings }: 
   const [ledger, setLedger] = useState<any[]>([]);
   const [scoreSimulatorParty, setScoreSimulatorParty] = useState<any>(null);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('All');
+  const [selectedVelocityParty, setSelectedVelocityParty] = useState<any>(null);
+
+  // Set default selected party on load for Financial Velocity preview
+  useEffect(() => {
+    if (!selectedVelocityParty && parties && parties.length > 0) {
+      setSelectedVelocityParty(parties[0]);
+    }
+  }, [parties, selectedVelocityParty]);
 
   // Load ledger to compute dynamic recent transaction volume
   useEffect(() => {
@@ -16,6 +25,69 @@ export function PartiesPage({ parties, toast, refresh, settings, setSettings }: 
       .then(setLedger)
       .catch(err => console.warn('Could not load ledger inside PartiesPage:', err));
   }, []);
+
+  const last6Months = useMemo(() => {
+    // Find latest month from the ledger or fallback to today
+    let latestMonth = '2026-07';
+    if (ledger && ledger.length > 0) {
+      const monthsInLedger = Array.from(new Set(ledger.map((r: any) => r['Month']).filter(Boolean))) as string[];
+      monthsInLedger.sort();
+      if (monthsInLedger.length > 0) {
+        latestMonth = monthsInLedger[monthsInLedger.length - 1];
+      }
+    }
+    
+    // Parse latestMonth year and month
+    const [yearStr, monthStr] = latestMonth.split('-');
+    const baseYear = parseInt(yearStr) || 2026;
+    const baseMonth = parseInt(monthStr) || 7;
+    
+    const list: string[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(baseYear, baseMonth - 1 - i, 1);
+      const yr = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      list.push(`${yr}-${mo}`);
+    }
+    return list;
+  }, [ledger]);
+
+  const velocityData = useMemo(() => {
+    if (!selectedVelocityParty || !ledger || ledger.length === 0) return [];
+    
+    const p = selectedVelocityParty;
+    const pName = p.accountName || '';
+    const pId = p.partyId;
+    
+    // Filter ledger entries for this party
+    const pLedger = ledger.filter((r: any) => 
+      r['Party ID'] === pId || (r['Account Name'] || '').toLowerCase() === pName.toLowerCase()
+    );
+    
+    // Sort oldest to newest
+    const sorted = pLedger.sort((a: any, b: any) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
+    
+    return last6Months.map((m: string) => {
+      const txnsInMonth = sorted.filter((r: any) => r['Month'] === m);
+      let balance = 0;
+      if (txnsInMonth.length > 0) {
+        balance = Number(txnsInMonth[txnsInMonth.length - 1]['Closing Balance']) || 0;
+      } else {
+        const txnsBefore = sorted.filter((r: any) => r['Month'] < m);
+        if (txnsBefore.length > 0) {
+          balance = Number(txnsBefore[txnsBefore.length - 1]['Closing Balance']) || 0;
+        } else {
+          balance = Number(p.openingBalance) || 0;
+        }
+      }
+      
+      return {
+        month: m,
+        label: mkLabel(m),
+        'Closing Balance': balance
+      };
+    });
+  }, [selectedVelocityParty, ledger, last6Months]);
 
   const partyCategories = useMemo(() => {
     if (!settings || !settings.party_categories) return {};
@@ -185,6 +257,95 @@ export function PartiesPage({ parties, toast, refresh, settings, setSettings }: 
         ))}
       </div>
 
+      {selectedVelocityParty && velocityData.length > 0 && (
+        <div className="card" style={{ marginBottom: '22px', border: '1.5px solid var(--border)', background: 'var(--surface)', padding: '20px', animation: 'su .15s ease-out' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>⚡</span>
+                <h3 style={{ fontSize: '15px', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  Financial Velocity & 6-Month Trend Analysis
+                </h3>
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '4px 0 0 0' }}>
+                Closing balance trend and capital speed for <strong style={{ color: 'var(--accent)' }}>{selectedVelocityParty.accountName}</strong>
+              </p>
+            </div>
+            <button className="btn sm" onClick={() => setSelectedVelocityParty(null)} style={{ padding: '4px 10px', fontSize: '11px' }}>✕ Close View</button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '20px', alignItems: 'center' }}>
+            {/* Recharts Area Chart */}
+            <div style={{ height: '180px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={velocityData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="var(--accent)" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="label" tick={{ fill: 'var(--text)', fontSize: 10 }} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+                  <YAxis 
+                    tickFormatter={v => '₹' + (v >= 100000 ? (v / 100000).toFixed(1) + 'L' : v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v)}
+                    tick={{ fill: 'var(--text)', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: 'var(--border)' }}
+                  />
+                  <Tooltip 
+                    formatter={(v: any) => [fmtRs(v), 'Closing Balance']}
+                    contentStyle={{ background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: '6px', fontSize: '11px', color: 'var(--text)' }}
+                  />
+                  <Area type="monotone" dataKey="Closing Balance" stroke="var(--accent)" strokeWidth={2.5} fillOpacity={1} fill="url(#colorBalance)" dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Velocity Stats List */}
+            <div style={{ background: 'var(--surface2)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--muted)', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                📊 Capital Metrics (Velocity)
+              </span>
+              
+              {/* Metrics calculation */}
+              {(() => {
+                const startBal = velocityData[0]?.['Closing Balance'] || 0;
+                const endBal = velocityData[velocityData.length - 1]?.['Closing Balance'] || 0;
+                const netChange = endBal - startBal;
+                const pctChange = startBal > 0 ? (netChange / startBal) * 100 : 0;
+                
+                const maxExposure = Math.max(...velocityData.map((d: any) => d['Closing Balance']), 0);
+                const avgExposure = velocityData.reduce((sum: number, d: any) => sum + d['Closing Balance'], 0) / (velocityData.length || 1);
+
+                return (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                      <span style={{ color: 'var(--muted)' }}>6-Month Change:</span>
+                      <span className="mono" style={{ fontWeight: 700, color: netChange >= 0 ? 'var(--red)' : 'var(--green)' }}>
+                        {netChange >= 0 ? '▲' : '▼'} {fmtRs(Math.abs(netChange))} ({netChange >= 0 ? '+' : ''}{pctChange.toFixed(0)}%)
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                      <span style={{ color: 'var(--muted)' }}>Peak Exposure:</span>
+                      <span className="mono" style={{ fontWeight: 700, color: 'var(--text)' }}>
+                        {fmtRs(maxExposure)}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                      <span style={{ color: 'var(--muted)' }}>Avg Outstanding:</span>
+                      <span className="mono" style={{ fontWeight: 700, color: 'var(--text)' }}>
+                        {fmtRs(avgExposure)}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="tbl-wrap">
         <table>
           <thead>
@@ -204,12 +365,17 @@ export function PartiesPage({ parties, toast, refresh, settings, setSettings }: 
             {filtered.map((p: any) => {
               const vol = partyVolumes[p.partyId] || partyVolumes[p.accountName] || 0;
               const cat = partyCategories[p.partyId] || 'Unassigned';
+              const isSelectedVelocity = selectedVelocityParty?.partyId === p.partyId;
               return (
-                <tr key={p.partyId}>
+                <tr key={p.partyId} style={{ background: isSelectedVelocity ? 'rgba(59, 130, 246, 0.04)' : undefined }}>
                   <td className="mono">{p.slNo}</td>
-                  <td style={{ fontWeight: 600 }}>
+                  <td 
+                    style={{ fontWeight: 600, cursor: 'pointer' }}
+                    onClick={() => setSelectedVelocityParty(p)}
+                    title="Click to view 6-month Financial Velocity trend"
+                  >
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                      <span style={{ fontSize: '13px' }}>{p.accountName}</span>
+                      <span className="hover-underline" style={{ fontSize: '13px', color: 'var(--accent)' }}>{p.accountName} 📈</span>
                       <div>
                         <span className="badge" style={{ 
                           fontSize: '9px', 
@@ -255,6 +421,7 @@ export function PartiesPage({ parties, toast, refresh, settings, setSettings }: 
                   <td>{statusBadge(p.status)}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 4 }}>
+                      <button className="act-btn" style={{ background: 'var(--surface2)', borderColor: 'var(--border2)', color: 'var(--accent)', fontWeight: 600 }} onClick={() => setSelectedVelocityParty(p)} title="View Financial Velocity Trend">📈 Trend</button>
                       <button className="act-btn edit" onClick={() => setModal(p)}>Edit</button>
                       <button className="act-btn del" onClick={() => del(p.partyId)}>Del</button>
                     </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Chart } from 'chart.js';
-import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ComposedChart, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { fmtRs, mkLabel } from '../lib/utils';
 import { statusBadge } from '../App';
 import * as api from '../lib/db';
@@ -83,6 +83,7 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
 
   // Recent Activity state
   const [recentTxns, setRecentTxns] = useState<any[]>([]);
+  const [fullLedger, setFullLedger] = useState<any[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
   const [localActivities, setLocalActivities] = useState<any[]>(() => {
     try {
@@ -110,7 +111,8 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
     api.getLedger(null)
       .then(r => {
         if (r && r.length > 0) {
-          const sorted = r.sort((a: any, b: any) => new Date(b['Timestamp']).getTime() - new Date(a['Timestamp']).getTime());
+          setFullLedger(r);
+          const sorted = r.slice().sort((a: any, b: any) => new Date(b['Timestamp']).getTime() - new Date(a['Timestamp']).getTime());
           setRecentTxns(sorted.slice(0, 5));
         }
       })
@@ -251,6 +253,117 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
   const exceededParties = useMemo(() => {
     return (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
   }, [parties]);
+
+  const avgCollectionDays = useMemo(() => {
+    if (!fullLedger || fullLedger.length === 0) return 30; // standard fallback
+    const sorted = fullLedger.slice().sort((a: any, b: any) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
+    const partyDebits: Record<string, { amount: number, date: Date }[]> = {};
+    let totalPaidInvoices = 0;
+    let totalCollectionDays = 0;
+
+    sorted.forEach((row: any) => {
+      const partyId = row['Party ID'] || row['Account Name'];
+      if (!partyId) return;
+      const date = new Date(row['Timestamp']);
+      const debit = Number(row['Debit (New Credit)']) || 0;
+      const credit = Number(row['Credit (Payment)']) || 0;
+
+      if (debit > 0) {
+        if (!partyDebits[partyId]) partyDebits[partyId] = [];
+        partyDebits[partyId].push({ amount: debit, date });
+      }
+
+      if (credit > 0) {
+        let remainingCredit = credit;
+        const debits = partyDebits[partyId] || [];
+        while (remainingCredit > 0 && debits.length > 0) {
+          const firstDebit = debits[0];
+          const diffTime = Math.max(0, date.getTime() - firstDebit.date.getTime());
+          const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+          if (firstDebit.amount <= remainingCredit) {
+            remainingCredit -= firstDebit.amount;
+            totalCollectionDays += diffDays;
+            totalPaidInvoices++;
+            debits.shift();
+          } else {
+            firstDebit.amount -= remainingCredit;
+            totalCollectionDays += diffDays;
+            totalPaidInvoices++;
+            remainingCredit = 0;
+          }
+        }
+      }
+    });
+
+    return totalPaidInvoices > 0 ? Math.round(totalCollectionDays / totalPaidInvoices) : 21;
+  }, [fullLedger]);
+
+  const topPerformingParties = useMemo(() => {
+    const partyTotals: Record<string, { partyId: string, name: string, totalPaid: number, score: number, limit: number }> = {};
+    
+    (parties || []).forEach((p: any) => {
+      partyTotals[p.partyId || p.accountName] = {
+        partyId: p.partyId,
+        name: p.accountName,
+        totalPaid: 0,
+        score: p.score || 50,
+        limit: Number(p.creditLimit) || 0
+      };
+    });
+
+    fullLedger.forEach((row: any) => {
+      const partyId = row['Party ID'] || row['Account Name'];
+      const credit = Number(row['Credit (Payment)']) || 0;
+      if (credit > 0 && partyTotals[partyId]) {
+        partyTotals[partyId].totalPaid += credit;
+      }
+    });
+
+    return Object.values(partyTotals)
+      .sort((a, b) => b.totalPaid - a.totalPaid)
+      .slice(0, 5)
+      .filter(p => p.totalPaid > 0);
+  }, [fullLedger, parties]);
+
+  const allPartyPerformanceData = useMemo(() => {
+    const currentMonth = summary.currentMonth;
+    return (parties || []).map((p: any) => {
+      const pName = p.accountName || '';
+      const pId = p.partyId;
+      
+      const pLedger = fullLedger.filter((row: any) => 
+        row['Party ID'] === pId || (row['Account Name'] || '').toLowerCase() === pName.toLowerCase()
+      );
+      
+      const sorted = pLedger.slice().sort((a, b) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
+      
+      const currentMonthTxns = sorted.filter((row: any) => row['Month'] === currentMonth);
+      
+      const totalCredits = currentMonthTxns.reduce((sum, row) => sum + (Number(row['Debit (New Credit)']) || 0), 0);
+      const totalPayments = currentMonthTxns.reduce((sum, row) => sum + (Number(row['Credit (Payment)']) || 0), 0);
+      
+      let openingBalance = 0;
+      if (currentMonthTxns.length > 0) {
+        openingBalance = Number(currentMonthTxns[0]['Opening Balance']) || 0;
+      } else {
+        const prevTxns = sorted.filter((row: any) => row['Month'] < currentMonth);
+        if (prevTxns.length > 0) {
+          openingBalance = Number(prevTxns[prevTxns.length - 1]['Closing Balance']) || 0;
+        } else {
+          openingBalance = Number(p.openingBalance) || 0;
+        }
+      }
+
+      return {
+        name: pName.length > 14 ? pName.slice(0, 12) + '..' : pName,
+        fullName: pName,
+        'Opening Balance': openingBalance,
+        'Credits Given': totalCredits,
+        'Payments Received': totalPayments
+      };
+    });
+  }, [fullLedger, parties, summary.currentMonth]);
 
   const trendsChartData = useMemo(() => {
     const sortedMonths = monthList.slice().sort((a: any, b: any) => a.localeCompare(b));
@@ -579,6 +692,140 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
               <Bar dataKey="Payments Received (Inflow)" fill="#059669" radius={[4, 4, 0, 0]} barSize={28} />
               <Line type="monotone" dataKey="Net Outstanding" stroke="#2563eb" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
             </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Business Performance BI Widget */}
+      <div className="card" style={{ marginBottom: '22px', border: '1.5px solid var(--border)', background: 'var(--surface)', padding: '20px' }}>
+        <div style={{ marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            💼 Business Performance BI Insights
+          </h3>
+          <p style={{ fontSize: '11.5px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+            Aggregated collection metrics, credit velocity, and top-ranking accounts.
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+          {/* Key KPIs */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Average Collection Days KPI */}
+            <div style={{ padding: '14px', background: 'var(--surface2)', borderRadius: '8px', borderLeft: '4.5px solid var(--accent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Average Collection Period (DSO)</span>
+                <div style={{ fontSize: '26px', fontWeight: 800, marginTop: '4px', fontFamily: 'var(--font-display)' }}>
+                  {avgCollectionDays} Days
+                </div>
+                <span style={{ fontSize: '11px', color: avgCollectionDays <= 30 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                  {avgCollectionDays <= 20 ? '⚡ Highly Optimal (<20d)' : avgCollectionDays <= 30 ? '✓ Within Safe Terms (≤30d)' : '⚠️ Warning: Slow Inflow (>30d)'}
+                </span>
+              </div>
+              <span style={{ fontSize: '28px', opacity: 0.8 }}>⏱️</span>
+            </div>
+
+            {/* MoM Revenue (Credit Volume) Growth */}
+            {momData && (
+              <div style={{ padding: '14px', background: 'var(--surface2)', borderRadius: '8px', borderLeft: '4.5px solid var(--green)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>MoM Revenue (Credit) Growth</span>
+                  <div style={{ fontSize: '26px', fontWeight: 800, marginTop: '4px', fontFamily: 'var(--font-display)', color: momData.creditPct >= 0 ? 'var(--text)' : 'var(--red)' }}>
+                    {momData.creditPct >= 0 ? '+' : ''}{momData.creditPct}%
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                    Credit Invoiced: {fmtRs(momData.currCredit)} (vs. {fmtRs(momData.prevCredit)} prev)
+                  </span>
+                </div>
+                <span style={{ fontSize: '28px', opacity: 0.8 }}>📈</span>
+              </div>
+            )}
+          </div>
+
+          {/* Top 5 Performing Parties */}
+          <div style={{ background: 'var(--surface2)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <span style={{ fontSize: '11.5px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--muted)', letterSpacing: '0.5px', display: 'block', marginBottom: '12px' }}>
+              🏆 Top 5 Performing Parties (Highest Collections)
+            </span>
+            {topPerformingParties.length === 0 ? (
+              <div style={{ fontSize: '12px', color: 'var(--muted)', textAlign: 'center', padding: '12px' }}>
+                No collections registered yet
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {topPerformingParties.map((p, idx) => (
+                  <div key={p.partyId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', padding: '8px 12px', borderRadius: '6px', border: '1.5px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--muted)', background: 'var(--surface2)', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {idx + 1}
+                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '12.5px', fontWeight: 600 }}>{p.name}</span>
+                        <span style={{ fontSize: '10px', color: 'var(--muted)' }}>Score: <strong style={{ color: p.score > 70 ? 'var(--green)' : p.score > 40 ? 'var(--yellow)' : 'var(--red)' }}>{p.score}</strong></span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="mono" style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--green)' }}>
+                        {fmtRs(p.totalPaid)}
+                      </div>
+                      <span style={{ fontSize: '9px', color: 'var(--muted)' }}>Total Inflow</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* All-Party Performance Chart Widget */}
+      <div className="card" style={{ marginBottom: '22px', border: '1.5px solid var(--border)', background: 'var(--surface)', padding: '20px' }}>
+        <div style={{ marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            📊 All-Party Performance Comparison
+          </h3>
+          <p style={{ fontSize: '11.5px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+            Comparative parallel breakdown of {mkLabel(summary.currentMonth)}'s opening balance, new credit given (sales), and payment collections across all customer accounts.
+          </p>
+        </div>
+
+        <div style={{ width: '100%', height: 320 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={allPartyPerformanceData}
+              margin={{ top: 10, right: 10, left: -10, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+              <XAxis 
+                dataKey="name" 
+                tick={{ fill: 'var(--text)', fontSize: 10 }}
+                axisLine={{ stroke: 'var(--border)' }}
+                tickLine={false}
+              />
+              <YAxis 
+                tickFormatter={v => '₹' + (v >= 100000 ? (v / 100000).toFixed(0) + 'L' : v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v)}
+                tick={{ fill: 'var(--text)', fontSize: 10 }}
+                axisLine={{ stroke: 'var(--border)' }}
+                tickLine={false}
+              />
+              <Tooltip
+                formatter={(value: any, name: string) => [fmtRs(value), name]}
+                contentStyle={{
+                  background: 'var(--surface)',
+                  border: '1.5px solid var(--border)',
+                  borderRadius: '6px',
+                  boxShadow: 'var(--shadow)',
+                  fontSize: '11px',
+                  color: 'var(--text)'
+                }}
+              />
+              <Legend 
+                wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                iconType="circle"
+              />
+              <Bar dataKey="Opening Balance" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={16} />
+              <Bar dataKey="Credits Given" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={16} />
+              <Bar dataKey="Payments Received" fill="#10b981" radius={[4, 4, 0, 0]} barSize={16} />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
