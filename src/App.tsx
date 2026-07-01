@@ -257,6 +257,66 @@ export default function App() {
     }
   }, [summary, settings, loading, recurringCheckedMonth, authEmail, checkAndRunRecurringTransactions]);
 
+  const saveTheme = async (t: string) => {
+    setSettings(s => ({ ...s, theme: t }));
+    document.documentElement.setAttribute('data-theme', t);
+    try {
+      await api.saveSetting('theme', t);
+      toast('Theme saved ✓', 'success');
+    } catch (e) {}
+  };
+
+  // Command Palette Options and Selection Mechanisms
+  const staticCommands = useMemo(() => [
+    { id: 'nav-dashboard', label: 'Go to Dashboard', category: 'Navigation', action: () => { setTab('dashboard'); } },
+    { id: 'nav-monthly', label: 'Go to Monthly View', category: 'Navigation', action: () => { setTab('monthly'); } },
+    { id: 'nav-lifting', label: 'Go to Goods Lifting', category: 'Navigation', action: () => { setTab('lifting'); } },
+    { id: 'nav-schedule', label: 'Go to Lifting Schedule', category: 'Navigation', action: () => { setTab('lifting-schedule'); } },
+    { id: 'nav-lifting-ledger', label: 'Go to Lifting Ledger', category: 'Navigation', action: () => { setTab('lifting-ledger'); } },
+    { id: 'nav-parties', label: 'Go to Parties', category: 'Navigation', action: () => { setTab('parties'); } },
+    { id: 'nav-ledger', label: 'Go to Ledger & Audits', category: 'Navigation', action: () => { setTab('ledger'); } },
+    { id: 'nav-settings', label: 'Go to Settings', category: 'Navigation', action: () => { setTab('settings'); } },
+    
+    { id: 'act-quick-entry', label: 'Post New Ledger Entry (Ctrl+N)', category: 'Quick Actions', action: () => { setShowQuickEntryModal(true); } },
+    { id: 'act-refresh', label: 'Sync / Refresh Workspace Data', category: 'Quick Actions', action: () => { refresh(); toast('Synchronizing workspace...', 'info'); } },
+    { id: 'act-reminders', label: 'Send Outstanding Reminders', category: 'Quick Actions', action: () => { api.sendReminderEmails().then(c => toast(`${c} reminders sent ✓`, 'success')).catch(e => toast(e.message, 'error')); } },
+    
+    { id: 'theme-ocean', label: 'Switch Theme to Ocean Blue', category: 'Theme Configuration', action: () => { saveTheme('ocean'); } },
+    { id: 'theme-sakura', label: 'Switch Theme to Sakura Cherry', category: 'Theme Configuration', action: () => { saveTheme('sakura'); } },
+    { id: 'theme-forest', label: 'Switch Theme to Forest Green', category: 'Theme Configuration', action: () => { saveTheme('forest'); } },
+    { id: 'theme-amber', label: 'Switch Theme to Amber Rust', category: 'Theme Configuration', action: () => { saveTheme('amber'); } },
+    { id: 'theme-slate', label: 'Switch Theme to Minimal Slate', category: 'Theme Configuration', action: () => { saveTheme('slate'); } },
+    { id: 'theme-lavender', label: 'Switch Theme to Lavender Dusk', category: 'Theme Configuration', action: () => { saveTheme('lavender'); } },
+  ], [refresh, toast]);
+
+  const filteredCommands = useMemo(() => {
+    const query = commandSearch.trim().toLowerCase();
+    const partyCommands = parties
+      .filter(p => !query || p.accountName?.toLowerCase().includes(query))
+      .map(p => ({
+        id: `party-${p.partyId}`,
+        label: `Open Transaction Ledger for ${p.accountName}`,
+        category: 'Parties & Accounts',
+        action: () => {
+          setTab('ledger');
+          try {
+            sessionStorage.setItem('preferred_ledger_party', p.accountName);
+            window.dispatchEvent(new Event('ledger_party_changed'));
+          } catch (e) {}
+        }
+      }));
+
+    const staticFiltered = staticCommands.filter(c => 
+      !query || c.label.toLowerCase().includes(query) || c.category.toLowerCase().includes(query)
+    );
+
+    return [...staticFiltered, ...partyCommands];
+  }, [commandSearch, parties, staticCommands]);
+
+  useEffect(() => {
+    setCommandSelectedIndex(0);
+  }, [commandSearch]);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', settings.theme || 'ocean');
   }, [settings.theme]);
@@ -343,65 +403,6 @@ export default function App() {
     );
   }
 
-  const saveTheme = async (t: string) => {
-    setSettings(s => ({ ...s, theme: t }));
-    document.documentElement.setAttribute('data-theme', t);
-    try {
-      await api.saveSetting('theme', t);
-      toast('Theme saved ✓', 'success');
-    } catch (e) {}
-  };
-
-  // Command Palette Options and Selection Mechanisms
-  const staticCommands = useMemo(() => [
-    { id: 'nav-dashboard', label: 'Go to Dashboard', category: 'Navigation', action: () => { setTab('dashboard'); } },
-    { id: 'nav-monthly', label: 'Go to Monthly View', category: 'Navigation', action: () => { setTab('monthly'); } },
-    { id: 'nav-lifting', label: 'Go to Goods Lifting', category: 'Navigation', action: () => { setTab('lifting'); } },
-    { id: 'nav-schedule', label: 'Go to Lifting Schedule', category: 'Navigation', action: () => { setTab('lifting-schedule'); } },
-    { id: 'nav-lifting-ledger', label: 'Go to Lifting Ledger', category: 'Navigation', action: () => { setTab('lifting-ledger'); } },
-    { id: 'nav-parties', label: 'Go to Parties', category: 'Navigation', action: () => { setTab('parties'); } },
-    { id: 'nav-ledger', label: 'Go to Ledger & Audits', category: 'Navigation', action: () => { setTab('ledger'); } },
-    { id: 'nav-settings', label: 'Go to Settings', category: 'Navigation', action: () => { setTab('settings'); } },
-    
-    { id: 'act-quick-entry', label: 'Post New Ledger Entry (Ctrl+N)', category: 'Quick Actions', action: () => { setShowQuickEntryModal(true); } },
-    { id: 'act-refresh', label: 'Sync / Refresh Workspace Data', category: 'Quick Actions', action: () => { refresh(); toast('Synchronizing workspace...', 'info'); } },
-    { id: 'act-reminders', label: 'Send Outstanding Reminders', category: 'Quick Actions', action: () => { api.sendReminderEmails().then(c => toast(`${c} reminders sent ✓`, 'success')).catch(e => toast(e.message, 'error')); } },
-    
-    { id: 'theme-ocean', label: 'Switch Theme to Ocean Blue', category: 'Theme Configuration', action: () => { saveTheme('ocean'); } },
-    { id: 'theme-sakura', label: 'Switch Theme to Sakura Cherry', category: 'Theme Configuration', action: () => { saveTheme('sakura'); } },
-    { id: 'theme-forest', label: 'Switch Theme to Forest Green', category: 'Theme Configuration', action: () => { saveTheme('forest'); } },
-    { id: 'theme-amber', label: 'Switch Theme to Amber Rust', category: 'Theme Configuration', action: () => { saveTheme('amber'); } },
-    { id: 'theme-slate', label: 'Switch Theme to Minimal Slate', category: 'Theme Configuration', action: () => { saveTheme('slate'); } },
-    { id: 'theme-lavender', label: 'Switch Theme to Lavender Dusk', category: 'Theme Configuration', action: () => { saveTheme('lavender'); } },
-  ], [refresh, toast]);
-
-  const filteredCommands = useMemo(() => {
-    const query = commandSearch.trim().toLowerCase();
-    const partyCommands = parties
-      .filter(p => !query || p.accountName?.toLowerCase().includes(query))
-      .map(p => ({
-        id: `party-${p.partyId}`,
-        label: `Open Transaction Ledger for ${p.accountName}`,
-        category: 'Parties & Accounts',
-        action: () => {
-          setTab('ledger');
-          try {
-            sessionStorage.setItem('preferred_ledger_party', p.accountName);
-            window.dispatchEvent(new Event('ledger_party_changed'));
-          } catch (e) {}
-        }
-      }));
-
-    const staticFiltered = staticCommands.filter(c => 
-      !query || c.label.toLowerCase().includes(query) || c.category.toLowerCase().includes(query)
-    );
-
-    return [...staticFiltered, ...partyCommands];
-  }, [commandSearch, parties, staticCommands]);
-
-  useEffect(() => {
-    setCommandSelectedIndex(0);
-  }, [commandSearch]);
 
   const handleCommandKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
