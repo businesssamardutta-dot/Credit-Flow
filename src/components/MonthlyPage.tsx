@@ -98,37 +98,64 @@ export function MonthlyPage({ months, parties, toast, currentMonth, settings, se
     }
   };
 
-  // Compile monthly trend data for selected party across all active months
+  // Compile monthly trend data for selected party or all parties combined across all active months
   const chartData = useMemo(() => {
     if (!chartParty) return null;
-    const filtered = allLedgerRows.filter((r: any) => 
-      (r['Account Name'] || '').toLowerCase() === chartParty.toLowerCase()
-    );
-    
-    // Sort oldest to newest
-    const sorted = filtered.sort((a, b) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
-    
+    const isAll = chartParty === 'ALL_PARTIES';
     const monthLabels = months;
     const dataPoints: number[] = [];
     
-    let currentBalance = 0;
-    const partyObj = parties.find((p: any) => p.accountName?.toLowerCase() === chartParty.toLowerCase());
-    if (partyObj) {
-      currentBalance = partyObj.openingBalance || 0;
-    }
-    
-    monthLabels.forEach((m: string) => {
-      const txnsInMonth = sorted.filter((r: any) => r['Month'] === m);
-      if (txnsInMonth.length > 0) {
-        currentBalance = Number(txnsInMonth[txnsInMonth.length - 1]['Closing Balance']) || 0;
-      } else {
-        const txnsBefore = sorted.filter((r: any) => r['Month'] < m);
-        if (txnsBefore.length > 0) {
-          currentBalance = Number(txnsBefore[txnsBefore.length - 1]['Closing Balance']) || 0;
-        }
+    if (isAll) {
+      monthLabels.forEach((m: string) => {
+        let monthTotal = 0;
+        parties.forEach((p: any) => {
+          const pName = p.accountName || '';
+          const filtered = allLedgerRows.filter((r: any) => 
+            (r['Party ID'] === p.partyId || (r['Account Name'] || '').toLowerCase() === pName.toLowerCase())
+          );
+          const sorted = filtered.sort((a, b) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
+          
+          let pBalance = Number(p.openingBalance) || 0;
+          const txnsInMonth = sorted.filter((r: any) => r['Month'] === m);
+          if (txnsInMonth.length > 0) {
+            pBalance = Number(txnsInMonth[txnsInMonth.length - 1]['Closing Balance']) || 0;
+          } else {
+            const txnsBefore = sorted.filter((r: any) => r['Month'] < m);
+            if (txnsBefore.length > 0) {
+              pBalance = Number(txnsBefore[txnsBefore.length - 1]['Closing Balance']) || 0;
+            }
+          }
+          monthTotal += pBalance;
+        });
+        dataPoints.push(monthTotal);
+      });
+    } else {
+      const filtered = allLedgerRows.filter((r: any) => 
+        (r['Account Name'] || '').toLowerCase() === chartParty.toLowerCase()
+      );
+      
+      // Sort oldest to newest
+      const sorted = filtered.sort((a, b) => new Date(a['Timestamp']).getTime() - new Date(b['Timestamp']).getTime());
+      
+      let currentBalance = 0;
+      const partyObj = parties.find((p: any) => p.accountName?.toLowerCase() === chartParty.toLowerCase());
+      if (partyObj) {
+        currentBalance = Number(partyObj.openingBalance) || 0;
       }
-      dataPoints.push(currentBalance);
-    });
+      
+      monthLabels.forEach((m: string) => {
+        const txnsInMonth = sorted.filter((r: any) => r['Month'] === m);
+        if (txnsInMonth.length > 0) {
+          currentBalance = Number(txnsInMonth[txnsInMonth.length - 1]['Closing Balance']) || 0;
+        } else {
+          const txnsBefore = sorted.filter((r: any) => r['Month'] < m);
+          if (txnsBefore.length > 0) {
+            currentBalance = Number(txnsBefore[txnsBefore.length - 1]['Closing Balance']) || 0;
+          }
+        }
+        dataPoints.push(currentBalance);
+      });
+    }
     
     return {
       labels: monthLabels.map((m: string) => mkLabel(m)),
@@ -216,7 +243,7 @@ export function MonthlyPage({ months, parties, toast, currentMonth, settings, se
   // Populate default chart party if empty and parties available
   useEffect(() => {
     if (!chartParty && parties && parties.length > 0) {
-      setChartParty(parties[0].accountName);
+      setChartParty('ALL_PARTIES');
     }
   }, [parties, chartParty]);
 
@@ -317,7 +344,7 @@ export function MonthlyPage({ months, parties, toast, currentMonth, settings, se
                 value={chartParty}
                 onChange={e => setChartParty(e.target.value)}
               >
-                <option value="">Choose a party...</option>
+                <option value="ALL_PARTIES">📊 All Parties (Combined)</option>
                 {parties.map((p: any) => (
                   <option key={p.partyId} value={p.accountName}>{p.accountName}</option>
                 ))}
