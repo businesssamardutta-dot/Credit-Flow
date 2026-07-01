@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Chart } from 'chart.js';
+import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { fmtRs, mkLabel } from '../lib/utils';
 import { statusBadge } from '../App';
 import * as api from '../lib/db';
@@ -250,6 +251,19 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
   const exceededParties = useMemo(() => {
     return (parties || []).filter((p: any) => p.creditLimit > 0 && (p.balance || 0) > p.creditLimit);
   }, [parties]);
+
+  const trendsChartData = useMemo(() => {
+    const sortedMonths = monthList.slice().sort((a: any, b: any) => a.localeCompare(b));
+    return sortedMonths.map((mk: string) => {
+      const d = ams[mk] || {};
+      return {
+        name: mkLabel(mk),
+        "Credit Sales (Outflow)": d.totalCredit || 0,
+        "Payments Received (Inflow)": d.totalPaid || 0,
+        "Net Outstanding": d.totalBalance || 0,
+      };
+    });
+  }, [monthList, ams]);
 
   const repData = useMemo(() => {
     return ams[reportMonth] || { totalCredit: 0, totalPaid: 0, totalBalance: 0 };
@@ -515,6 +529,59 @@ export function DashboardPage({ summary, parties, toast, refresh, setTab }: any)
           </div>
         </div>
       )}
+
+      {/* Financial Trends Chart Widget */}
+      <div className="card" style={{ marginBottom: '22px', border: '1.5px solid var(--border)', background: 'var(--surface)', padding: '20px' }}>
+        <div style={{ marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            📊 Financial Trends Analysis
+          </h3>
+          <p style={{ fontSize: '11.5px', color: 'var(--muted)', margin: '2px 0 0 0' }}>
+            Comparative trend of monthly credit volume (outflow) versus payment collections (inflow).
+          </p>
+        </div>
+
+        <div style={{ width: '100%', height: 320 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={trendsChartData}
+              margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+              <XAxis 
+                dataKey="name" 
+                tick={{ fill: 'var(--text)', fontSize: 10 }}
+                axisLine={{ stroke: 'var(--border)' }}
+                tickLine={false}
+              />
+              <YAxis 
+                tickFormatter={v => '₹' + (v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v)}
+                tick={{ fill: 'var(--text)', fontSize: 10 }}
+                axisLine={{ stroke: 'var(--border)' }}
+                tickLine={false}
+              />
+              <Tooltip
+                formatter={(value: any) => [fmtRs(value), '']}
+                contentStyle={{
+                  background: 'var(--surface)',
+                  border: '1.5px solid var(--border)',
+                  borderRadius: '6px',
+                  boxShadow: 'var(--shadow)',
+                  fontSize: '11px',
+                  color: 'var(--text)'
+                }}
+              />
+              <Legend 
+                wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                iconType="circle"
+              />
+              <Bar dataKey="Credit Sales (Outflow)" fill="#7c3aed" radius={[4, 4, 0, 0]} barSize={28} />
+              <Bar dataKey="Payments Received (Inflow)" fill="#059669" radius={[4, 4, 0, 0]} barSize={28} />
+              <Line type="monotone" dataKey="Net Outstanding" stroke="#2563eb" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
 
       {/* Financial Summary Report Widget */}
       <div className="card" style={{ marginBottom: '22px', border: '1.5px solid var(--border)', background: 'var(--surface)' }}>

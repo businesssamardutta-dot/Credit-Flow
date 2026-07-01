@@ -11,6 +11,8 @@ export function SettingsPage({ settings, setSettings, saveTheme, toast, refresh,
   const [rxMethod, setRxMethod] = useState('Cash');
   const [rxRef, setRxRef] = useState('');
   const [rxBusy, setRxBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   // Parse defined recurring transactions
   const recurringTxns = useMemo(() => {
@@ -29,6 +31,78 @@ export function SettingsPage({ settings, setSettings, saveTheme, toast, refresh,
       return [];
     }
   }, [settings.recurringTxnsRunLog]);
+
+  const handleExportBackup = async () => {
+    setExporting(true);
+    try {
+      toast('Generating full system backup...', 'info');
+      const allParties = await api.getParties();
+      const allLedger = await api.getLedger(null);
+      
+      const backupData = {
+        version: '1.0',
+        timestamp: new Date().toISOString(),
+        settings: settings,
+        parties: allParties,
+        ledger: allLedger
+      };
+      
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `creditflow_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      toast('Backup exported successfully! 💾', 'success');
+    } catch (err: any) {
+      toast('Export failed: ' + err.message, 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const confirmRestore = window.confirm(
+      "⚠️ WARNING: Restoring a backup will overwrite and replace the entire database state (Parties, Ledgers, and Settings). This action is irreversible. Are you absolutely sure you want to proceed?"
+    );
+    if (!confirmRestore) {
+      e.target.value = ''; // clear input
+      return;
+    }
+    
+    setRestoring(true);
+    toast('Parsing backup file...', 'info');
+    
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      
+      if (!data.parties || !data.ledger || !data.settings) {
+        throw new Error("Invalid backup format. Ensure it contains parties, ledger, and settings keys.");
+      }
+      
+      toast('Restoring data to server...', 'info');
+      await api.restoreDatabaseBackup(data);
+      
+      toast('Database restore complete! Recalculating scores...', 'info');
+      await api.updateAllScores();
+      
+      toast('Database fully restored successfully! ✓', 'success');
+      refresh();
+    } catch (err: any) {
+      toast('Restore failed: ' + err.message, 'error');
+    } finally {
+      setRestoring(false);
+      e.target.value = ''; // clear input
+    }
+  };
 
   const isProcessedForThisMonth = summary?.currentMonth ? runLog.includes(summary.currentMonth) : false;
 
@@ -354,6 +428,41 @@ export function SettingsPage({ settings, setSettings, saveTheme, toast, refresh,
             >
               🚀 Process entries for {summary?.currentMonth || 'Month'}
             </button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">🗄️ Data Management</div>
+          <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '0 0 14px 0', lineHeight: 1.4 }}>
+            Export all application state including settings, parties, and transaction ledger histories to a local backup file, or restore from a previously saved backup file.
+          </p>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button 
+              className="btn" 
+              style={{ padding: '8px 16px', fontSize: '12.5px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={handleExportBackup}
+              disabled={exporting || restoring}
+            >
+              📥 {exporting ? 'Exporting...' : 'Export System Backup'}
+            </button>
+            <div style={{ position: 'relative' }}>
+              <input 
+                type="file" 
+                id="restore-file-input" 
+                accept=".json" 
+                style={{ display: 'none' }} 
+                onChange={handleRestoreBackup}
+                disabled={exporting || restoring}
+              />
+              <button 
+                className="btn primary" 
+                style={{ padding: '8px 16px', fontSize: '12.5px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => document.getElementById('restore-file-input')?.click()}
+                disabled={exporting || restoring}
+              >
+                📤 {restoring ? 'Restoring...' : 'Restore System Backup'}
+              </button>
+            </div>
           </div>
         </div>
 

@@ -99,6 +99,47 @@ export function PartiesPage({ parties, toast, refresh, settings, setSettings }: 
     }
   };
 
+  const handleExportCSV = () => {
+    if (filtered.length === 0) {
+      toast('No data to export', 'error');
+      return;
+    }
+    
+    // Headers
+    const headers = ["SL No", "Account Name", "Category", "Contact No", "Email", "Address", "Credit Limit", "Credit Days", "Payment Mode", "Outstanding Balance"];
+    
+    // Rows
+    const rows = filtered.map((p: any) => {
+      const cat = partyCategories[p.partyId] || 'Unassigned';
+      const vol = partyVolumes[p.partyId] || partyVolumes[p.accountName] || 0;
+      return [
+        p.slNo || '',
+        `"${(p.accountName || '').replace(/"/g, '""')}"`,
+        cat,
+        p.contactNo || '',
+        p.email || '',
+        `"${(p.address || '').replace(/"/g, '""')}"`,
+        p.creditLimit || 0,
+        p.creditDays || '',
+        p.paymentMode || '',
+        vol
+      ];
+    });
+    
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `parties_export_${selectedCategoryFilter.toLowerCase()}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    toast('CSV Exported! 📥', 'success');
+  };
+
   const CATEGORY_TABS = [
     { key: 'All', label: 'All', count: counts.All },
     { key: 'Supplier', label: 'Suppliers', count: counts.Supplier },
@@ -114,6 +155,7 @@ export function PartiesPage({ parties, toast, refresh, settings, setSettings }: 
         <h2>Parties ({(parties || []).length})</h2>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <input className="search-input" placeholder="Search by name, contact, volume, category…" value={filter} onChange={e => setFilter(e.target.value)} style={{ width: '280px' }} />
+          <button className="btn" onClick={handleExportCSV}>📤 Export CSV</button>
           <button className="btn" onClick={() => setModal('csv')}>📥 CSV Import</button>
           <button className="btn primary" onClick={() => setModal('add')}>+ Add Party</button>
         </div>

@@ -125,3 +125,4 @@ export const addPartiesBulk = async (parties: any[]) => gas('addPartiesBulk', pa
 export const addLedgerEntriesBulk = async (entries: any[]) => gas('addLedgerEntriesBulk', entries);
 export const getAuditLogs = async () => gas('getAuditLogs');
 export const sendPartyLedgerEmail = async (partyId: string, textReport: string) => gas('sendPartyLedgerEmail', partyId, textReport);
+export const restoreDatabaseBackup = async (data: any) => gas('restoreDatabaseBackup', data);

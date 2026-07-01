@@ -38,6 +38,7 @@ function doPost(e) {
     else if (payload.func === 'addLedgerEntriesBulk') result = addLedgerEntriesBulk.apply(null, payload.args);
     else if (payload.func === 'getAuditLogs') result = getAuditLogs();
     else if (payload.func === 'sendPartyLedgerEmail') result = sendPartyLedgerEmail.apply(null, payload.args);
+    else if (payload.func === 'restoreDatabaseBackup') result = restoreDatabaseBackup.apply(null, payload.args);
     else throw new Error("Unknown function requested: " + payload.func);
 
     return ContentService.createTextOutput(JSON.stringify({success: true, data: result}))
@@ -1822,4 +1823,101 @@ function sendPartyLedgerEmail(partyId, textReport) {
   });
   
   return true;
+}
+
+function clearSheetRows(sheetName, headers, color) {
+  const ss = SS();
+  let sh = ss.getSheetByName(sheetName);
+  if (sh) {
+    const lastRow = sh.getLastRow();
+    if (lastRow > 1) {
+      sh.deleteRows(2, lastRow - 1);
+    }
+  } else {
+    ensureSheet(sheetName, headers, color);
+  }
+}
+
+function restoreDatabaseBackup(data) {
+  assertRole([CFG.ROLES.ADMIN]);
+  if (!data) throw new Error("No restore data provided");
+  
+  const parties = data.parties || [];
+  const ledger = data.ledger || [];
+  const settings = data.settings || {};
+  
+  // 1. Clear sheets
+  clearSheetRows(CFG.SH.PARTIES, CFG.COLS.PARTIES, '#3730a3');
+  clearSheetRows(CFG.SH.LEDGER, CFG.COLS.LEDGER, '#065f46');
+  clearSheetRows(CFG.SH.SETTINGS, CFG.COLS.SETTINGS, '#1e293b');
+  
+  // 2. Restore settings
+  const sSh = SS().getSheetByName(CFG.SH.SETTINGS);
+  Object.keys(settings).forEach(key => {
+    sSh.appendRow([key, String(settings[key] || '')]);
+  });
+  
+  // 3. Restore parties
+  const pSh = SS().getSheetByName(CFG.SH.PARTIES);
+  const user = Session.getActiveUser().getEmail() || 'System';
+  parties.forEach(p => {
+    const id = p.partyId || uid('P');
+    const slNo = p.slNo || '';
+    const name = p.accountName || '';
+    const contact = p.contactNo || '';
+    const address = p.address || '';
+    const email = p.email || '';
+    const limit = toNum(p.creditLimit);
+    const days = p.creditDays || '7 DAYS';
+    const status = p.status || 'ACTIVE';
+    const score = toNum(p.score || 50);
+    const mode = p.paymentMode || '';
+    
+    pSh.appendRow([id, slNo, name, contact, address, email, limit, days, status, score, mode, user, new Date(p.createdAt || Date.now()), new Date()]);
+  });
+  
+  // 4. Restore ledger
+  const lSh = SS().getSheetByName(CFG.SH.LEDGER);
+  ledger.forEach(e => {
+    const newRow = new Array(CFG.COLS.LEDGER.length).fill("");
+    const colMap = {};
+    CFG.COLS.LEDGER.forEach((header, index) => {
+      colMap[header.toString().trim().toLowerCase()] = index;
+    });
+    
+    const setValue = (targetHeaderNames, value) => {
+      for (let name of targetHeaderNames) {
+        let idx = colMap[name.toLowerCase()];
+        if (idx !== undefined) {
+          newRow[idx] = value;
+          return true;
+        }
+      }
+      return false;
+    };
+    
+    setValue(['Timestamp', 'Date'], e.timestamp ? new Date(e.timestamp) : new Date());
+    setValue(['Party ID'], e.partyId);
+    setValue(['Account Name', 'Account'], e.accountName || '');
+    setValue(['Month'], String(e.month || mk()));
+    setValue(['Opening Balance', 'Opening'], toNum(e.openingBalance));
+    setValue(['Debit (New Credit)', 'Debit (Credit)', 'Debit'], toNum(e.debit));
+    setValue(['Credit (Payment)', 'Credit (Payment)', 'Credit'], toNum(e.credit));
+    setValue(['Closing Balance', 'Closing'], toNum(e.closingBalance));
+    setValue(['Status'], e.status || '');
+    setValue(['Collector', 'User'], e.collector || user);
+    setValue(['Notes'], e.notes || '');
+    
+    lSh.appendRow(newRow);
+  });
+  
+  // Re-sync monthly and lifting just to be absolutely sure they are healthy
+  try {
+    const monthKey = mk();
+    syncMonthlyFromLedger(monthKey);
+  } catch (e) {
+    console.warn("Restore syncMonth error:", e);
+  }
+  
+  return { success: true, restoredParties: parties.length, restoredLedger: ledger.length };
 }
